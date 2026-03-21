@@ -1,0 +1,17 @@
+services:
+  llm-proxy:
+    build: .
+    image: llm-proxy:latest
+    container_name: llm-proxy
+    ports:
+      - "10.10.10.1:443:443"
+    volumes:
+      - ./ca:/app/ca
+      - ./config.yml:/app/config.yml
+      - ./models:/app/models
+    environment:
+      # 如果你在 config.yml 中配置了 api_key_env，请在此处注入对应的环境变量
+      # 你可以直接写死真实的值（如：EXAMPLE_API_KEY=sk-xxxxxx）
+      # 或者在宿主机同目录创建一个 .env 文件，并在这里引用它（如：EXAMPLE_API_KEY=${EXAMPLE_API_KEY}）
+      - EXAMPLE_API_KEY=${EXAMPLE_API_KEY}
+    restart: unless-stopped

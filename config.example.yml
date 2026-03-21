@@ -1,0 +1,50 @@
+# LLM-Proxy 配置文件示例
+# 请将此文件复制为 config.yml 并根据实际情况修改配置
+
+# 思考解析器配置（custom_model_id 的匹配关键词 -> 解析器类型）
+# 当客户端请求的 custom_model_id 中包含以下关键词时，将使用对应的解析器
+# 解析器类型: 
+# - think_tag (使用 <think> 标签的推理过程)
+# - reasoning (返回数据中带有 reasoning 字段)
+# - reasoning_content (返回数据中带有 reasoning_content 字段)
+chunk_parsers:
+  minimax: think_tag  # 匹配 custom_model_id 包含 minimax 的请求
+  gemini: reasoning
+  google: reasoning
+  anthropic: think_tag
+  # 如果请求的模型没有匹配到以上任何关键词，将默认认为其是符合 OpenAI 标准的模型（直接透传）
+
+# 后端配置
+backends:
+  # 模型组配置（通过前缀匹配，将相同前缀的模型请求路由到指定的 API）
+  groups:
+    - name: "example_provider" # 供应商名称
+      model_prefix: "example/" # 匹配的模型前缀
+      endpoint: "https://api.example.com/v1" # 供应商的 API 地址 (请替换为真实地址)
+      stream: true # 后端是否原生支持流式输出，如设为 false，代理会利用模拟器返回流式响应
+      models_endpoint: "/v1/models" # 获取模型列表的端点
+      models_file: "models/example.json" # 缓存模型列表的文件路径
+      api_key_env: "EXAMPLE_API_KEY" # 从环境变量中读取 API Key 的变量名
+
+  # 精确匹配的 API 配置（为特定模型进行别名映射或指定独立的 API 地址）
+  apis:
+    - name: "example-gpt-4" # 配置名称
+      endpoint: "https://api.example.com/v1" # 目标 API 地址 (请替换为真实地址)
+      stream: true # 后端是否原生支持流式输出
+      custom_model_id: "my-gpt-4" # 客户端请求使用的自定义模型 ID
+      target_model_id: "gpt-4" # 实际请求上游使用的模型 ID
+      api_key_env: "EXAMPLE_API_KEY" # 从环境变量中读取 API Key 的变量名
+    - name: "example-gemini"
+      endpoint: "https://api.example.com/v1"
+      stream: true
+      custom_model_id: "my-gemini-pro"
+      target_model_id: "gemini-pro"
+
+# 代理服务器配置
+server:
+  domains:
+    - api.example.com # 代理服务器拦截的域名列表 (请替换为需要代理的域名)
+  port: 443 # 代理服务器监听端口
+  debug: true # 是否开启 debug 模式
+  cert_file: "ca/llm-proxy.crt" # 证书文件路径
+  key_file: "ca/llm-proxy.key" # 私钥文件路径
