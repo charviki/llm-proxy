@@ -50,6 +50,13 @@
 
 ### 准备工作 (必做)
 
+> ⚠️ **环境依赖要求**
+>
+> 无论是本地运行还是通过 Docker 部署，在生成自签发证书时都依赖系统提供 `openssl` 命令行工具。请确保你的环境已安装它：
+> - **macOS**: `brew install openssl`
+> - **Ubuntu/Debian**: `sudo apt update && sudo apt install openssl`
+> - **Windows**: 推荐通过 [Scoop](https://scoop.sh/) 安装 `scoop install openssl`
+
 1. **克隆项目到本地**：
    ```bash
    git clone https://github.com/charviki/llm-proxy.git

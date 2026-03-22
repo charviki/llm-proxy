@@ -50,6 +50,13 @@ You can run this project from **source code** or using **Docker Compose**. Regar
 
 ### Preparation (Required)
 
+> ⚠️ **System Requirements**
+>
+> Whether running locally or deploying via Docker, generating self-signed certificates requires the `openssl` command-line tool. Please ensure it is installed on your system:
+> - **macOS**: `brew install openssl`
+> - **Ubuntu/Debian**: `sudo apt update && sudo apt install openssl`
+> - **Windows**: Recommended to install via [Scoop](https://scoop.sh/): `scoop install openssl`
+
 1. **Clone the repository**:
    ```bash
    git clone https://github.com/charviki/llm-proxy.git
