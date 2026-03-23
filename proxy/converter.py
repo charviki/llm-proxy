@@ -40,6 +40,14 @@ class BaseChunkConverter:
         return ReasoningContent(reasoning=None, content=content)
 
 
+    def process_chunk(self, delta: dict) -> ReasoningContent:
+        """
+        兜底处理，直接返回原始 content，不提取 reasoning
+        为非流式请求提供兼容的接口调用
+        """
+        content = delta.get("content", None)
+        return ReasoningContent(reasoning=None, content=content)
+
 class ThinkState(IntEnum):
     UNSTARTED = 0
     THINKING = 1
