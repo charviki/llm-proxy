@@ -75,11 +75,6 @@ class ProxyHandler:
         """带重试的 POST 请求"""
         return await self._client.post(url, **kwargs)
 
-    @async_retry(max_attempts=10, backoff_factor=1.0)
-    async def _stream_with_retry(self, method: str, url: str, **kwargs):
-        """带重试的流式请求上下文管理器"""
-        return self._client.stream(method, url, **kwargs)
-
     def select_backend(self, requested_model: str) -> Optional[Backend]:
         """根据模型 ID 查找后端"""
         if self.models_manager:
@@ -167,53 +162,73 @@ class ProxyHandler:
         async def stream_generator():
             full_response_chunks = []
             converter = self.parser_matcher.get_parser(custom_model_id)
-            try:
-                async with self._stream_with_retry("POST", target_url, json=req_json, headers=headers) as response:
-                    if response.status_code != 200:
-                        yield await response.aread()
-                        return
+            last_exception = None
 
-                    # 优化：在循环外预先判断日志级别，避免每次迭代进行日志级别检查
-                    is_debug = self.logger.isEnabledFor(logging.DEBUG)
-                    async for line in response.aiter_lines():
-                        # 仅在 DEBUG 模式下收集完整的响应流，减少生产环境下的内存消耗
-                        if is_debug:
-                            full_response_chunks.append(line.encode('utf-8') + b'\n')
+            for      in range(10):
+                try:
+                    async with self._client.stream("POST", target_url, json=req_json, headers=headers) as response:
+                        if response.status_code != 200:
+                            yield await response.aread()
+                            return
 
-                        # 跳过空行（aiter_lines 拆分 SSE 双换行时产生的空行）
-                        if not line:
-                            continue
+                        # 优化：在循环外预先判断日志级别，避免每次迭代进行日志级别检查
+                        is_debug = self.logger.isEnabledFor(logging.DEBUG)
+                        async for line in response.aiter_lines():
+                            # 仅在 DEBUG 模式下收集完整的响应流，减少生产环境下的内存消耗
+                            if is_debug:
+                                full_response_chunks.append(line.encode('utf-8') + b'\n')
 
-                        if line.startswith("data: "):
-                            data_content = line[len("data: "):]
-                            # [DONE] 标记直接透传
-                            if data_content == "[DONE]":
-                                yield b"data: [DONE]\n\n"
+                            # 跳过空行（aiter_lines 拆分 SSE 双换行时产生的空行）
+                            if not line:
                                 continue
-                            processed = converter.parse(data_content)
-                            if processed is not None:
-                                yield f"data: {processed}\n\n".encode('utf-8')
-                        else:
-                            yield f"{line}\n\n".encode('utf-8')
 
-            except Exception as e:
-                self.logger.error(f"[{endpoint}] 转发流式请求失败: {e}")
-                error_data = json.dumps({
-                    "error": {
-                        "message": f"Proxy error: {str(e)}",
-                        "type": "server_error",
-                        "code": "proxy_error"
-                    }
-                }, ensure_ascii=False)
-                yield f'data: {error_data}\n\n'.encode('utf-8')
-            finally:
-                if full_response_chunks:
-                    try:
-                        full_response_bytes = b"".join(full_response_chunks)
-                        full_response_str = full_response_bytes.decode('utf-8', errors='replace')
-                        self.logger.debug(f"[{endpoint}] 完整流式响应内容:\n{full_response_str}")
-                    except Exception as e:
-                        self.logger.error(f"[{endpoint}] 记录完整流式响应失败: {e}")
+                            if line.startswith("data: "):
+                                data_content = line[len("data: "):]
+                                # [DONE] 标记直接透传
+                                if data_content == "[DONE]":
+                                    yield b"data: [DONE]\n\n"
+                                    continue
+                                processed = converter.parse(data_content)
+                                if processed is not None:
+                                    yield f"data: {processed}\n\n".encode('utf-8')
+                            else:
+                                yield f"{line}\n\n".encode('utf-8')
+                    return  # 成功完成，退出
+
+                except (httpx.HTTPStatusError, httpx.RequestError, asyncio.TimeoutError) as e:
+                    last_exception = e
+                    if attempt < 9:
+                        delay = 1.0 * (2 ** attempt)
+                        # 仅 5xx 和网络错误重试
+                        if isinstance(e, httpx.HTTPStatusError) and not (500 <= e.response.status_code < 600):
+                            self.logger.error(f"[{endpoint}] 请求失败（不重试）: {e}")
+                            break
+                        self.logger.warning(f"[{endpoint}] 请求失败 (attempt {attempt + 1}/10), {delay:.1f}s 后重试: {e}")
+                        await asyncio.sleep(delay)
+                    else:
+                        self.logger.error(f"[{endpoint}] 请求失败，已达最大重试次数 (10): {e}")
+                except Exception as e:
+                    last_exception = e
+                    self.logger.error(f"[{endpoint}] 转发流式请求失败: {e}")
+                    break
+
+            # 所有重试都失败
+            error_data = json.dumps({
+                "error": {
+                    "message": f"Proxy error: {str(last_exception)}",
+                    "type": "server_error",
+                    "code": "proxy_error"
+                }
+            }, ensure_ascii=False)
+            yield f'data: {error_data}\n\n'.encode('utf-8')
+
+            if full_response_chunks:
+                try:
+                    full_response_bytes = b"".join(full_response_chunks)
+                    full_response_str = full_response_bytes.decode('utf-8', errors='replace')
+                    self.logger.debug(f"[{endpoint}] 完整流式响应内容:\n{full_response_str}")
+                except Exception as e:
+                    self.logger.error(f"[{endpoint}] 记录完整流式响应失败: {e}")
 
         return StreamingResponse(stream_generator(), media_type="text/event-stream", headers=_SSE_HEADERS)
 
