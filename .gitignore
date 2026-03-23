@@ -211,3 +211,5 @@ config.yml
 docker-compose.yml
 ca/
 models/
+.docs
+.clause

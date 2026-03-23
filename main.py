@@ -22,7 +22,9 @@ async def lifespan(app: FastAPI):
 
     # 设置连接池限制以提高高并发情况下的网络处理能力
     limits = httpx.Limits(max_keepalive_connections=200, max_connections=2000)
-    client = httpx.AsyncClient(timeout=300.0, limits=limits)
+    # 分段超时：连接快速失败，读取留足够时间给 Agent 长推理任务
+    timeout = httpx.Timeout(connect=10.0, read=600.0, write=30.0, pool=30.0)
+    client = httpx.AsyncClient(timeout=timeout, limits=limits)
     await proxy_handler.set_client(client)
     logger.info("初始化 httpx.AsyncClient 成功")
 

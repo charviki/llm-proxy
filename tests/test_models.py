@@ -76,9 +76,9 @@ async def test_load_models_success(backends_config, mock_logger, tmp_path, monke
             return {"data": [{"id": "gpt-4"}, {"id": "gpt-3.5"}]}
             
     class MockClient:
-        async def get(self, url, timeout):
+        async def get(self, url, headers=None, timeout=None):
             return MockResponse()
-            
+
     manager = ModelsManager(backends_config, mock_logger)
     await manager.load_models(MockClient())
     
@@ -105,7 +105,7 @@ async def test_load_models_from_file_fallback(backends_config, mock_logger, tmp_
     backends_config.groups[0].models_file = str(fallback_file)
     
     class MockErrorClient:
-        async def get(self, url, timeout):
+        async def get(self, url, headers=None, timeout=None):
             raise Exception("Network Error")
             
     manager = ModelsManager(backends_config, mock_logger)

@@ -41,8 +41,16 @@ class ModelsManager:
         models_file.parent.mkdir(parents=True, exist_ok=True)
 
         try:
+            # 构造请求头，将配置的环境变量作为 Bearer Token 添加进去
+            headers = {}
+            if group.api_key_env:
+                api_key = os.environ.get(group.api_key_env)
+                if api_key:
+                    headers["Authorization"] = f"Bearer {api_key}"
+
             response = await client.get(
                 f"{group.endpoint}{group.models_endpoint}",
+                headers=headers,
                 timeout=30.0
             )
             if response.status_code == 200:

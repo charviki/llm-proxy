@@ -1,7 +1,9 @@
 """OpenAI 代理处理器 - 核心代理逻辑"""
+import asyncio
 import logging
 import copy
 import json
+from functools import wraps
 from typing import Optional
 import httpx
 from fastapi import Request
@@ -11,6 +13,45 @@ from config.models import BackendsConfig
 from .stream import StreamSimulator
 from .converter import ChunkConverterMatcher
 from .models import ModelsManager, Backend
+
+# 标准 SSE 响应头，防止中间层缓冲
+_SSE_HEADERS = {
+    "Cache-Control": "no-cache",
+    "X-Accel-Buffering": "no",
+    "Connection": "keep-alive",
+}
+
+
+def async_retry(max_attempts: int = 10, backoff_factor: float = 1.0):
+    """
+    异步函数重试装饰器
+
+    Args:
+        max_attempts: 最大重试次数
+        backoff_factor: 退避因子，重试间隔 = backoff_factor * (2 ** (attempt - 1))
+    """
+    def decorator(func):
+        @wraps(func)
+        async def wrapper(*args, **kwargs):
+            last_exception = None
+            for attempt in range(max_attempts):
+                try:
+                    return await func(*args, **kwargs)
+                except (httpx.HTTPStatusError, httpx.RequestError, asyncio.TimeoutError) as e:
+                    last_exception = e
+                    if attempt < max_attempts - 1:
+                        delay = backoff_factor * (2 ** attempt)
+                        # 5xx 错误或网络错误才重试
+                        if isinstance(e, httpx.HTTPStatusError) and not (500 <= e.response.status_code < 600):
+                            raise  # 4xx 错误不重试
+                        logging.warning(f"请求失败 (attempt {attempt + 1}/{max_attempts}), {delay:.1f}s 后重试: {e}")
+                        await asyncio.sleep(delay)
+                    else:
+                        logging.error(f"请求失败，已达最大重试次数 ({max_attempts}): {e}")
+                        raise
+            raise last_exception
+        return wrapper
+    return decorator
 
 
 class ProxyHandler:
@@ -28,6 +69,16 @@ class ProxyHandler:
         self._client = client
         self.models_manager = ModelsManager(self.backends, self.logger)
         await self.models_manager.load_models(client)
+
+    @async_retry(max_attempts=10, backoff_factor=1.0)
+    async def _post_with_retry(self, url: str, **kwargs) -> httpx.Response:
+        """带重试的 POST 请求"""
+        return await self._client.post(url, **kwargs)
+
+    @async_retry(max_attempts=10, backoff_factor=1.0)
+    async def _stream_with_retry(self, method: str, url: str, **kwargs):
+        """带重试的流式请求上下文管理器"""
+        return self._client.stream(method, url, **kwargs)
 
     def select_backend(self, requested_model: str) -> Optional[Backend]:
         """根据模型 ID 查找后端"""
@@ -78,10 +129,10 @@ class ProxyHandler:
 
             # 客户端是否请求了流式输出
             original_stream = req_json.get('stream', False)
-            
+
             # 综合判断：只有当客户端请求流式，且后端也支持流式时，才向后端发送流式请求
             is_backend_stream = original_stream and backend.stream
-            
+
             if 'stream' in req_json:
                 req_json['stream'] = is_backend_stream
 
@@ -117,7 +168,7 @@ class ProxyHandler:
             full_response_chunks = []
             converter = self.parser_matcher.get_parser(custom_model_id)
             try:
-                async with self._client.stream("POST", target_url, json=req_json, headers=headers) as response:
+                async with self._stream_with_retry("POST", target_url, json=req_json, headers=headers) as response:
                     if response.status_code != 200:
                         yield await response.aread()
                         return
@@ -129,16 +180,32 @@ class ProxyHandler:
                         if is_debug:
                             full_response_chunks.append(line.encode('utf-8') + b'\n')
 
+                        # 跳过空行（aiter_lines 拆分 SSE 双换行时产生的空行）
+                        if not line:
+                            continue
+
                         if line.startswith("data: "):
-                            processed = converter.parse(line[len("data: "):])
+                            data_content = line[len("data: "):]
+                            # [DONE] 标记直接透传
+                            if data_content == "[DONE]":
+                                yield b"data: [DONE]\n\n"
+                                continue
+                            processed = converter.parse(data_content)
                             if processed is not None:
-                                yield f"data: {processed}\n".encode('utf-8')
+                                yield f"data: {processed}\n\n".encode('utf-8')
                         else:
-                            yield f"{line}\n".encode('utf-8')
+                            yield f"{line}\n\n".encode('utf-8')
 
             except Exception as e:
                 self.logger.error(f"[{endpoint}] 转发流式请求失败: {e}")
-                yield f'data: {{"error": "转发流式请求失败: {str(e)}"}}\n\n'.encode('utf-8')
+                error_data = json.dumps({
+                    "error": {
+                        "message": f"Proxy error: {str(e)}",
+                        "type": "server_error",
+                        "code": "proxy_error"
+                    }
+                }, ensure_ascii=False)
+                yield f'data: {error_data}\n\n'.encode('utf-8')
             finally:
                 if full_response_chunks:
                     try:
@@ -148,14 +215,14 @@ class ProxyHandler:
                     except Exception as e:
                         self.logger.error(f"[{endpoint}] 记录完整流式响应失败: {e}")
 
-        return StreamingResponse(stream_generator(), media_type="text/event-stream")
+        return StreamingResponse(stream_generator(), media_type="text/event-stream", headers=_SSE_HEADERS)
 
     async def _handle_non_stream_request(
         self, req_json: dict, headers: dict, target_url: str,
         endpoint: str, custom_model_id: str, original_stream: bool
     ) -> Response:
         """处理非流式请求"""
-        response = await self._client.post(target_url, json=req_json, headers=headers)
+        response = await self._post_with_retry(target_url, json=req_json, headers=headers)
 
         if response.status_code != 200:
             try:
@@ -177,6 +244,9 @@ class ProxyHandler:
             if converter is not None:
                 message = response_json.get("choices", [{}])[0].get("message", {})
                 if message:
+                    # 保护 tool_calls 字段不被 converter 影响
+                    saved_tool_calls = message.get("tool_calls")
+
                     # 使用 Converter 提取思考和正文
                     result = converter.process_chunk(message)
                     if result.reasoning:
@@ -187,14 +257,20 @@ class ProxyHandler:
                     message.pop("reasoning", None)
                     message.pop("reasoning_details", None)
 
+                    # 恢复 tool_calls
+                    if saved_tool_calls is not None:
+                        message["tool_calls"] = saved_tool_calls
+
             return StreamingResponse(
                 StreamSimulator.simulate_chat_completion(response_json, custom_model_id),
-                media_type='text/event-stream'
+                media_type='text/event-stream',
+                headers=_SSE_HEADERS
             )
         elif original_stream and endpoint == "completions":
             return StreamingResponse(
                 StreamSimulator.simulate_completions(response_json, custom_model_id),
-                media_type='text/event-stream'
+                media_type='text/event-stream',
+                headers=_SSE_HEADERS
             )
 
         # 客户端请求的也是非流式，但我们仍然需要清理可能存在的标签或私有字段
@@ -202,6 +278,9 @@ class ProxyHandler:
         if converter is not None and endpoint == "chat/completions":
             message = response_json.get("choices", [{}])[0].get("message", {})
             if message:
+                # 保护 tool_calls 字段
+                saved_tool_calls = message.get("tool_calls")
+
                 result = converter.process_chunk(message)
                 if result.reasoning:
                     message["reasoning_content"] = result.reasoning
@@ -209,6 +288,10 @@ class ProxyHandler:
                     message["content"] = result.content
                 message.pop("reasoning", None)
                 message.pop("reasoning_details", None)
+
+                # 恢复 tool_calls
+                if saved_tool_calls is not None:
+                    message["tool_calls"] = saved_tool_calls
 
         if 'model' in response_json:
             response_json['model'] = custom_model_id
