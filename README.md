@@ -53,6 +53,7 @@
 > ⚠️ **环境依赖要求**
 >
 > 无论是本地运行还是通过 Docker 部署，在生成自签发证书时都依赖系统提供 `openssl` 命令行工具。请确保你的环境已安装它：
+>
 > - **macOS**: `brew install openssl`
 > - **Ubuntu/Debian**: `sudo apt update && sudo apt install openssl`
 > - **Windows**: 推荐通过 [Scoop](https://scoop.sh/) 安装 `scoop install openssl`
@@ -95,26 +96,6 @@
 
 使用 Docker 部署更加干净，且容器会自动为你生成证书。
 
-#### 解决 443 端口与 VPN 冲突（可选但推荐）
-
-默认情况下，容器可能会尝试绑定宿主机的全局 `0.0.0.0:443` 端口。这不仅可能与宿主机上运行的 Nginx 等其他 Web 服务产生端口冲突，**在开启某些 VPN 或代理软件（如 Clash、Surge、GlobalProtect 等）时，也极易发生路由或端口接管冲突，导致无法正常劫持请求**。
-为了彻底解决这些冲突问题，本项目通过 `docker-compose.example.yml` 将端口映射到了独立的虚拟 IP（默认 `10.10.10.1`）。在启动前，你需要为宿主机配置该 **本地回环网卡别名 (Loopback Alias)**：
-
-- **Linux / macOS**:
-  ```bash
-  # 临时生效（重启后丢失）
-  sudo bash scripts/setup_network.sh
-  
-  # 永久生效（推荐，将注册为开机自启服务，确保 Docker 重启后能正常绑定 IP）
-  sudo bash scripts/setup_network.sh --install
-  ```
-- **Windows**:
-  使用 **管理员权限** 打开 PowerShell 并执行：
-  ```powershell
-  .\scripts\setup_network.ps1
-  ```
-*(注意：脚本内置了 IP 占用检测，如果 `10.10.10.1` 已被局域网内其他设备占用，请修改脚本和 `docker-compose.yml` 中的 IP 地址。)*
-
 #### 启动服务
 
 1. **启动容器**：
@@ -145,16 +126,118 @@
 
 ### 2. 配置 Hosts 文件劫持域名
 
-修改系统的 hosts 文件，将你需要劫持的域名（对应 `config.yml` 中的 `server.domains`）指向代理服务器的 IP 地址（本地即 `127.0.0.1`）。
+修改系统的 hosts 文件，将你需要劫持的域名（对应 `config.yml` 中的 `server.domains`）指向代理服务器的 IP 地址。
+
+- **默认情况**：指向 `127.0.0.1`。
+- **使用了端口转发方案**：指向 `127.0.0.2` (详见文末的端口冲突解决方案)。
 
 编辑文件（macOS/Linux: `/etc/hosts`，Windows: `C:\Windows\System32\drivers\etc\hosts`），添加：
 
 ```text
-# llm-proxy 劫持 (如果是源码启动或未配置虚拟 IP，请使用 127.0.0.1)
-# 127.0.0.1 api.openai.com
-
-# 如果使用了虚拟 IP 方案 (默认 10.10.10.1)，请将域名指向该 IP
-10.10.10.1 api.openai.com
+# llm-proxy 劫持
+127.0.0.1 api.openai.com
+# 如果配置了端口转发备用方案，请使用：
+# 127.0.0.2 api.openai.com
 ```
 
 完成后，目标应用对 `api.openai.com` 的所有请求都会被 `llm-proxy` 截获，并按照你的 `config.yml` 规则路由到真实的自定义模型上！
+
+---
+
+## ❓ 常见问题与特殊环境配置
+
+### 解决 443 端口与 VPN 冲突（备用方案）
+
+默认情况下，`docker-compose.yml` 中容器监听的是本地 `443` 端口 (`443:443`)。在大多数情况下，这样已经足够。
+
+但是，这可能会与宿主机上运行的 Nginx 等其他 Web 服务产生端口冲突，或者**在开启某些 VPN 或代理软件（如 Clash、Surge 等）时，极易发生路由或端口接管冲突，导致无法正常劫持请求**。此时，你需要采用 **回环网卡 + 端口转发** 的备用方案。
+
+该方案的核心思想是：让容器监听 `18443`，并在系统中配置一个独立的回环 IP（如 `127.0.0.2` 或 `127.0.0.3`），将发往该 IP 的 443 端口流量转发至本地的 18443。
+
+**第一步：修改端口映射**
+将 `docker-compose.yml` 中的 `ports` 修改为监听本地 `18443` 端口：
+
+```yaml
+ports:
+  - "18443:443"
+```
+
+**第二步：根据你的系统环境配置端口转发与 Hosts**
+
+#### ▶ Linux / macOS 宿主机
+
+1. 运行提供的网络配置脚本，将发往 `127.0.0.2:443` 的请求转发至本地的 `18443` 端口：
+
+   ```bash
+   # 临时生效（重启后丢失）
+   sudo bash scripts/setup_network.sh
+
+   # 永久生效（推荐，将注册为开机自启服务）
+   sudo bash scripts/setup_network.sh --install
+   ```
+
+2. **修改 Hosts**：在客户端的 `/etc/hosts` 中，将需要劫持的域名指向 `127.0.0.2`。
+
+#### ▶ Windows 宿主机 (不使用 WSL 开发)
+
+1. 使用 **管理员权限** 打开 PowerShell 并执行脚本，将发往 `127.0.0.2:443` 的请求转发至本地的 `18443` 端口：
+   ```powershell
+   .\scripts\setup_network.ps1
+   ```
+2. **修改 Hosts**：在 Windows 的 Hosts 文件中，将需要劫持的域名指向 `127.0.0.2`。
+
+#### ▶ Windows + WSL 开发环境 (如 VSCode WSL)
+
+如果你在 WSL 中进行开发，由于端口改为了 18443，WSL 无法直接访问宿主机的代理容器。你需要为 WSL 单独配置 `127.0.0.3` 的回环与转发：
+
+1. **启用 Mirrored 网络模式**
+   在 Windows 的 `C:\Users\<YourUsername>\.wslconfig` 文件中添加或修改：
+
+   ```ini
+   [wsl2]
+   networkingMode=mirrored
+   ```
+
+   _(修改后请重启 WSL: 在 Windows PowerShell 中执行 `wsl --shutdown`)_
+
+2. **关闭 WSL 自动生成 hosts**
+   进入 WSL，编辑 `/etc/wsl.conf`：
+
+   ```ini
+   [network]
+   generateHosts = false
+   ```
+
+3. **配置 WSL Hosts**
+   在 WSL 的 `/etc/hosts` 中添加劫持记录：
+
+   ```text
+   127.0.0.3 api.openai.com
+   ```
+
+4. **配置 WSL 的 systemd 服务进行端口转发**
+   在 WSL 中执行以下命令，安装 `socat` 并创建 `systemd` 服务，将 `127.0.0.3:443` 的流量转发到宿主机可见的 `18443` 端口：
+
+   ```bash
+   sudo apt update && sudo apt install socat
+
+   sudo tee /etc/systemd/system/llm-proxy.service << 'EOF'
+   [Unit]
+   Description=LLM API Proxy (127.0.0.3:443 -> 127.0.0.1:18443)
+   After=network.target
+
+   [Service]
+   Type=simple
+   ExecStartPre=-/sbin/ip addr add 127.0.0.3/8 dev lo
+   ExecStart=/usr/bin/socat TCP-LISTEN:443,bind=127.0.0.3,reuseaddr,fork TCP:127.0.0.1:18443
+   ExecStopPost=-/sbin/ip addr del 127.0.0.3/8 dev lo
+   Restart=always
+   RestartSec=3
+
+   [Install]
+   WantedBy=multi-user.target
+   EOF
+
+   sudo systemctl daemon-reload
+   sudo systemctl enable --now llm-proxy.service
+   ```

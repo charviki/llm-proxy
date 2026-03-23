@@ -95,27 +95,6 @@ This project uses [uv](https://github.com/astral-sh/uv) for dependency managemen
 
 Using Docker is cleaner, and the container will automatically generate the certificates for you.
 
-#### Resolving 443 Port & VPN Conflicts (Optional but Recommended)
-
-By default, the container may attempt to bind to the host's global `0.0.0.0:443` port. This can not only cause port conflicts with other web services like Nginx running on the host, but **it is also highly prone to routing or port takeover conflicts when certain VPN or proxy software (like Clash, Surge, GlobalProtect, etc.) is active, which can prevent the proxy from hijacking requests normally**.
-
-To thoroughly resolve these conflicts, this project maps the ports to an independent virtual IP (default `10.10.10.1`) via `docker-compose.example.yml`. Before starting, you need to configure this **Loopback Alias** for your host machine:
-
-- **Linux / macOS**:
-  ```bash
-  # Temporary effect (lost after reboot)
-  sudo bash scripts/setup_network.sh
-  
-  # Persistent effect (Recommended, registers as an auto-start service to ensure Docker can bind the IP after reboot)
-  sudo bash scripts/setup_network.sh --install
-  ```
-- **Windows**:
-  Open PowerShell with **Administrator privileges** and execute:
-  ```powershell
-  .\scripts\setup_network.ps1
-  ```
-*(Note: The scripts have built-in IP occupation detection. If `10.10.10.1` is already in use by another device on your LAN, please modify the IP address in both the script and `docker-compose.yml`.)*
-
 #### Starting the Service
 
 1. **Start the container**:
@@ -146,16 +125,198 @@ Locate the `ca/llm-proxy-ca.crt` file (this is the root CA certificate) generate
 
 ### 2. Configure Hosts File to Hijack Domains
 
-Modify your system's hosts file to point the domains you want to hijack (corresponding to `server.domains` in `config.yml`) to the proxy server's IP address (`127.0.0.1` if running locally).
+Modify your system's hosts file to point the domains you want to hijack (corresponding to `server.domains` in `config.yml`) to the proxy server's IP address.
+
+- **Default Case**: point to `127.0.0.1`.
+- **Using Port Forwarding Solution**: point to `127.0.0.2` (See the FAQ section at the end for details).
 
 Edit the file (macOS/Linux: `/etc/hosts`, Windows: `C:\Windows\System32\drivers\etc\hosts`) and add:
 
 ```text
-# llm-proxy hijacking (Use 127.0.0.1 if running from source or without virtual IP)
-# 127.0.0.1 api.openai.com
-
-# If using the virtual IP solution (default 10.10.10.1), point the domain to that IP
-10.10.10.1 api.openai.com
+# llm-proxy hijacking
+127.0.0.1 api.openai.com
+# If using the port forwarding fallback solution, use:
+# 127.0.0.2 api.openai.com
 ```
 
 Once done, all requests made by the target application to `api.openai.com` will be intercepted by `llm-proxy` and routed to your custom models based on your `config.yml` rules!
+
+---
+
+## ❓ FAQ & Special Environment Configuration
+
+### Resolving 443 Port & VPN Conflicts (Fallback Solution)
+
+By default, the container in `docker-compose.yml` listens on the local `443` port (`443:443`). In most cases, this is sufficient. 
+
+However, this may cause port conflicts with other web services like Nginx running on the host, or **it is highly prone to routing or port takeover conflicts when certain VPN or proxy software (like Clash, Surge, etc.) is active, which can prevent the proxy from hijacking requests normally**. At this point, you need to adopt the **Loopback + Port Forwarding** fallback solution.
+
+The core idea of this solution is: Let the container listen to port `18443`, and configure an independent loopback IP (like `127.0.0.2` or `127.0.0.3`) in the system to forward the 443 port traffic sent to this IP to the local 18443.
+
+**Step 1: Modify Port Mapping**
+Change the `ports` in `docker-compose.yml` to listen on the local `18443` port:
+```yaml
+ports:
+  - "18443:443"
+```
+
+**Step 2: Configure Port Forwarding and Hosts Based on Your System**
+
+#### ▶ Linux / macOS Host
+
+1. Run the provided network setup scripts to forward requests sent to `127.0.0.2:443` to the local `18443` port:
+   ```bash
+   # Temporary effect (lost after reboot)
+   sudo bash scripts/setup_network.sh
+   
+   # Persistent effect (Recommended, registers as an auto-start service)
+   sudo bash scripts/setup_network.sh --install
+   ```
+2. **Modify Hosts**: In the client's `/etc/hosts`, point the domains you need to hijack to `127.0.0.2`.
+
+#### ▶ Windows Host (Without WSL Development)
+
+1. Open PowerShell with **Administrator privileges** and execute the script to forward requests sent to `127.0.0.2:443` to the local `18443` port:
+   ```powershell
+   .\scripts\setup_network.ps1
+   ```
+2. **Modify Hosts**: In the Windows Hosts file, point the domains you need to hijack to `127.0.0.2`.
+
+#### ▶ Windows + WSL Development Environment (e.g., VSCode WSL)
+
+If you are developing in WSL, because the port has changed to 18443, WSL cannot directly access the proxy container on the host. You must separately configure the `127.0.0.3` loopback and forwarding for WSL:
+
+1. **Enable Mirrored Networking Mode**
+   Add or modify the `C:\Users\<YourUsername>\.wslconfig` file in Windows:
+   ```ini
+   [wsl2]
+   networkingMode=mirrored
+   ```
+   *(After modification, please restart WSL: Execute `wsl --shutdown` in Windows PowerShell)*
+
+2. **Disable Auto-Generation of Hosts in WSL**
+   Enter WSL, edit `/etc/wsl.conf`:
+   ```ini
+   [network]
+   generateHosts = false
+   ```
+
+3. **Configure WSL Hosts**
+   Add hijacking records in WSL's `/etc/hosts`:
+   ```text
+   127.0.0.3 api.openai.com
+   ```
+
+4. **Configure WSL systemd Service for Port Forwarding**
+   Execute the following commands in WSL to install `socat` and create a `systemd` service to forward `127.0.0.3:443` traffic to the host-visible `18443` port:
+   ```bash
+   sudo apt update && sudo apt install socat
+   
+   sudo tee /etc/systemd/system/llm-proxy.service << 'EOF'
+   [Unit]
+   Description=LLM API Proxy (127.0.0.3:443 -> 127.0.0.1:18443)
+   After=network.target
+
+   [Service]
+   Type=simple
+   ExecStartPre=-/sbin/ip addr add 127.0.0.3/8 dev lo
+   ExecStart=/usr/bin/socat TCP-LISTEN:443,bind=127.0.0.3,reuseaddr,fork TCP:127.0.0.1:18443
+   ExecStopPost=-/sbin/ip addr del 127.0.0.3/8 dev lo
+   Restart=always
+   RestartSec=3
+
+   [Install]
+   WantedBy=multi-user.target
+   EOF
+
+   sudo systemctl daemon-reload
+   sudo systemctl enable --now llm-proxy.service
+   ```
+
+### Resolving 443 Port & VPN Conflicts (Fallback Solution)
+
+By default, the container in `docker-compose.yml` listens on the local `443` port (`443:443`). In most cases, this is sufficient. 
+
+However, this may cause port conflicts with other web services like Nginx running on the host, or **it is highly prone to routing or port takeover conflicts when certain VPN or proxy software (like Clash, Surge, etc.) is active, which can prevent the proxy from hijacking requests normally**. At this point, you need to adopt the **Loopback + Port Forwarding** fallback solution.
+
+The core idea of this solution is: Let the container listen to port `18443`, and configure an independent loopback IP (like `127.0.0.2` or `127.0.0.3`) in the system to forward the 443 port traffic sent to this IP to the local 18443.
+
+**Step 1: Modify Port Mapping**
+Change the `ports` in `docker-compose.yml` to listen on the local `18443` port:
+```yaml
+ports:
+  - "18443:443"
+```
+
+**Step 2: Configure Port Forwarding and Hosts Based on Your System**
+
+#### ▶ Linux / macOS Host
+
+1. Run the provided network setup scripts to forward requests sent to `127.0.0.2:443` to the local `18443` port:
+   ```bash
+   # Temporary effect (lost after reboot)
+   sudo bash scripts/setup_network.sh
+   
+   # Persistent effect (Recommended, registers as an auto-start service)
+   sudo bash scripts/setup_network.sh --install
+   ```
+2. **Modify Hosts**: In the client's `/etc/hosts`, point the domains you need to hijack to `127.0.0.2`.
+
+#### ▶ Windows Host (Without WSL Development)
+
+1. Open PowerShell with **Administrator privileges** and execute the script to forward requests sent to `127.0.0.2:443` to the local `18443` port:
+   ```powershell
+   .\scripts\setup_network.ps1
+   ```
+2. **Modify Hosts**: In the Windows Hosts file, point the domains you need to hijack to `127.0.0.2`.
+
+#### ▶ Windows + WSL Development Environment (e.g., VSCode WSL)
+
+If you are developing in WSL, because the port has changed to 18443, WSL cannot directly access the proxy container on the host. You must separately configure the `127.0.0.3` loopback and forwarding for WSL:
+
+1. **Enable Mirrored Networking Mode**
+   Add or modify the `C:\Users\<YourUsername>\.wslconfig` file in Windows:
+   ```ini
+   [wsl2]
+   networkingMode=mirrored
+   ```
+   *(After modification, please restart WSL: Execute `wsl --shutdown` in Windows PowerShell)*
+
+2. **Disable Auto-Generation of Hosts in WSL**
+   Enter WSL, edit `/etc/wsl.conf`:
+   ```ini
+   [network]
+   generateHosts = false
+   ```
+
+3. **Configure WSL Hosts**
+   Add hijacking records in WSL's `/etc/hosts`:
+   ```text
+   127.0.0.3 api.openai.com
+   ```
+
+4. **Configure WSL systemd Service for Port Forwarding**
+   Execute the following commands in WSL to install `socat` and create a `systemd` service to forward `127.0.0.3:443` traffic to the host-visible `18443` port:
+   ```bash
+   sudo apt update && sudo apt install socat
+   
+   sudo tee /etc/systemd/system/llm-proxy.service << 'EOF'
+   [Unit]
+   Description=LLM API Proxy (127.0.0.3:443 -> 127.0.0.1:18443)
+   After=network.target
+
+   [Service]
+   Type=simple
+   ExecStartPre=-/sbin/ip addr add 127.0.0.3/8 dev lo
+   ExecStart=/usr/bin/socat TCP-LISTEN:443,bind=127.0.0.3,reuseaddr,fork TCP:127.0.0.1:18443
+   ExecStopPost=-/sbin/ip addr del 127.0.0.3/8 dev lo
+   Restart=always
+   RestartSec=3
+
+   [Install]
+   WantedBy=multi-user.target
+   EOF
+
+   sudo systemctl daemon-reload
+   sudo systemctl enable --now llm-proxy.service
+   ```

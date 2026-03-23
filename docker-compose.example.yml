@@ -4,7 +4,7 @@ services:
     image: llm-proxy:latest
     container_name: llm-proxy
     ports:
-      - "10.10.10.1:443:443"
+      - "443:443"
     volumes:
       - ./ca:/app/ca
       - ./config.yml:/app/config.yml
