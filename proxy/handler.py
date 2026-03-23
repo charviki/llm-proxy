@@ -164,7 +164,7 @@ class ProxyHandler:
             converter = self.parser_matcher.get_parser(custom_model_id)
             last_exception = None
 
-            for      in range(10):
+            for attempt in range(10):
                 try:
                     async with self._client.stream("POST", target_url, json=req_json, headers=headers) as response:
                         if response.status_code != 200:
