@@ -1,0 +1,139 @@
+{
+  "version": "1.0",
+  "recorded_at": "2026-03-24T15:30:51.255820Z",
+  "workflow": {
+    "input": {
+      "path": "/path/to/my-project"
+    },
+    "tools": [
+      {
+        "type": "function",
+        "function": {
+          "name": "list_files",
+          "description": "列出指定路径下的所有文件和目录",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string",
+                "description": "要列出的目录路径"
+              }
+            },
+            "required": [
+              "path"
+            ]
+          }
+        }
+      },
+      {
+        "type": "function",
+        "function": {
+          "name": "read_file",
+          "description": "读取指定文件的内容",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string",
+                "description": "文件所在的目录路径"
+              },
+              "filename": {
+                "type": "string",
+                "description": "要读取的文件名"
+              }
+            },
+            "required": [
+              "path",
+              "filename"
+            ]
+          }
+        }
+      }
+    ],
+    "model": "MiniMax-M2.7"
+  },
+  "messages": [
+    {
+      "role": "user",
+      "content": "请分析项目 /path/to/my-project，先列出项目文件，然后读取 README.md 文件，最后总结项目功能。"
+    },
+    {
+      "role": "assistant",
+      "content": "",
+      "tool_calls": [
+        {
+          "id": "call_function_gmq1a4xvytqt_1",
+          "type": "function",
+          "function": {
+            "name": "list_files",
+            "arguments": "{\"path\": \"/path/to/my-project\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_function_gmq1a4xvytqt_1",
+      "content": "[\"README.md\", \"src/\", \"package.json\", \"main.py\", \".gitignore\"]"
+    },
+    {
+      "role": "assistant",
+      "content": "",
+      "tool_calls": [
+        {
+          "id": "call_function_iqr90t4lb57d_1",
+          "type": "function",
+          "function": {
+            "name": "read_file",
+            "arguments": "{\"path\": \"/path/to/my-project\", \"filename\": \"README.md\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_function_iqr90t4lb57d_1",
+      "content": "# My Project\n\n这是一个 Python Web 项目，主要功能包括：\n\n## 功能特性\n\n- RESTful API 路由\n- 数据库 ORM 操作\n- JWT 用户认证\n- WebSocket 实时通信\n\n## 技术栈\n\n- Python 3.11+\n- FastAPI\n- SQLAlchemy\n- Pydantic\n"
+    }
+  ],
+  "backend_responses": [
+    {
+      "step": 1,
+      "raw_chunks": [
+        "data: {\"id\":\"061170ab4a20a7b95079dd802dad5229\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"<think>\\n用户要求\",\"role\":\"assistant\",\"name\":\"MiniMax AI\",\"audio_content\":\"\"}}],\"created\":1774337451,\"model\":\"MiniMax-M2.7\",\"object\":\"chat.completion.chunk\",\"usage\":null,\"input_sensitive\":false,\"output_sensitive\":false,\"input_sensitive_type\":0,\"output_sensitive_type\":0,\"output_sensitive_int\":0}",
+        "data: {\"id\":\"061170ab4a20a7b95079dd802dad5229\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"我分析一个项目，需要：\\n1. 列出项目文件\\n2. 读取 README.md 文件\\n3. 总结项目功能\\n\\n我先\",\"role\":\"assistant\",\"name\":\"MiniMax AI\",\"audio_content\":\"\"}}],\"created\":1774337451,\"model\":\"MiniMax-M2.7\",\"object\":\"chat.completion.chunk\",\"usage\":null,\"input_sensitive\":false,\"output_sensitive\":false,\"input_sensitive_type\":0,\"output_sensitive_type\":0,\"output_sensitive_int\":0}",
+        "data: {\"id\":\"061170ab4a20a7b95079dd802dad5229\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"列出项目文件。\\n</think>\\n\\n\\n\",\"role\":\"assistant\",\"name\":\"MiniMax AI\",\"audio_content\":\"\"}}],\"created\":1774337451,\"model\":\"MiniMax-M2.7\",\"object\":\"chat.completion.chunk\",\"usage\":null,\"input_sensitive\":false,\"output_sensitive\":false,\"input_sensitive_type\":0,\"output_sensitive_type\":0,\"output_sensitive_int\":0}",
+        "data: {\"id\":\"061170ab4a20a7b95079dd802dad5229\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"\",\"role\":\"assistant\",\"name\":\"MiniMax AI\",\"tool_calls\":[{\"id\":\"call_function_gmq1a4xvytqt_1\",\"type\":\"function\",\"function\":{\"name\":\"list_files\",\"arguments\":\"{\\\"path\\\": \\\"/path/to/my-project\"},\"index\":0}],\"audio_content\":\"\"}}],\"created\":1774337451,\"model\":\"MiniMax-M2.7\",\"object\":\"chat.completion.chunk\",\"usage\":null,\"input_sensitive\":false,\"output_sensitive\":false,\"input_sensitive_type\":0,\"output_sensitive_type\":0,\"output_sensitive_int\":0}",
+        "data: {\"id\":\"061170ab4a20a7b95079dd802dad5229\",\"choices\":[{\"finish_reason\":\"tool_calls\",\"index\":0,\"delta\":{\"content\":\"\",\"role\":\"assistant\",\"name\":\"MiniMax AI\",\"tool_calls\":[{\"function\":{\"arguments\":\"\\\"}\"},\"index\":0}],\"audio_content\":\"\"}}],\"created\":1774337451,\"model\":\"MiniMax-M2.7\",\"object\":\"chat.completion.chunk\",\"usage\":null,\"input_sensitive\":false,\"output_sensitive\":false,\"input_sensitive_type\":0,\"output_sensitive_type\":0,\"output_sensitive_int\":0}"
+      ],
+      "reasoning_content": "用户要求我分析一个项目，需要：\n1. 列出项目文件\n2. 读取 README.md 文件\n3. 总结项目功能\n\n我先列出项目文件。",
+      "content": ""
+    },
+    {
+      "step": 2,
+      "raw_chunks": [
+        "data: {\"id\":\"061170b46b3dd429f84b42db91e81555\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"<think>\\n用户让我\",\"role\":\"assistant\",\"name\":\"MiniMax AI\",\"audio_content\":\"\"}}],\"created\":1774337460,\"model\":\"MiniMax-M2.7\",\"object\":\"chat.completion.chunk\",\"usage\":null,\"input_sensitive\":false,\"output_sensitive\":false,\"input_sensitive_type\":0,\"output_sensitive_type\":0,\"output_sensitive_int\":0}",
+        "data: {\"id\":\"061170b46b3dd429f84b42db91e81555\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"分析项目，我已经列出了文件列表。现在我需要读取 README.md 文件来了解项目功能。\\n</think>\\n\\n\\n\",\"role\":\"assistant\",\"name\":\"MiniMax AI\",\"audio_content\":\"\"}}],\"created\":1774337460,\"model\":\"MiniMax-M2.7\",\"object\":\"chat.completion.chunk\",\"usage\":null,\"input_sensitive\":false,\"output_sensitive\":false,\"input_sensitive_type\":0,\"output_sensitive_type\":0,\"output_sensitive_int\":0}",
+        "data: {\"id\":\"061170b46b3dd429f84b42db91e81555\",\"choices\":[{\"finish_reason\":\"tool_calls\",\"index\":0,\"delta\":{\"content\":\"\",\"role\":\"assistant\",\"name\":\"MiniMax AI\",\"tool_calls\":[{\"id\":\"call_function_iqr90t4lb57d_1\",\"type\":\"function\",\"function\":{\"name\":\"read_file\",\"arguments\":\"{\\\"path\\\": \\\"/path/to/my-project\\\", \\\"filename\\\": \\\"README.md\\\"}\"},\"index\":0}],\"audio_content\":\"\"}}],\"created\":1774337460,\"model\":\"MiniMax-M2.7\",\"object\":\"chat.completion.chunk\",\"usage\":null,\"input_sensitive\":false,\"output_sensitive\":false,\"input_sensitive_type\":0,\"output_sensitive_type\":0,\"output_sensitive_int\":0}"
+      ],
+      "reasoning_content": "用户让我分析项目，我已经列出了文件列表。现在我需要读取 README.md 文件来了解项目功能。",
+      "content": ""
+    },
+    {
+      "step": 3,
+      "raw_chunks": [
+        "data: {\"id\":\"061170bd2bd864b31e066541d16079c6\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"<think>\\n根据文件\",\"role\":\"assistant\",\"name\":\"MiniMax AI\",\"audio_content\":\"\"}}],\"created\":1774337469,\"model\":\"MiniMax-M2.7\",\"object\":\"chat.completion.chunk\",\"usage\":null,\"input_sensitive\":false,\"output_sensitive\":false,\"input_sensitive_type\":0,\"output_sensitive_type\":0,\"output_sensitive_int\":0}",
+        "data: {\"id\":\"061170bd2bd864b31e066541d16079c6\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"列表和README.md的内容，我可以总结这个项目的信息了。\\n</think>\\n\\n## 项目分析结果\\n\\n### 项目文件结构\\n```\\n/path\",\"role\":\"assistant\",\"name\":\"MiniMax AI\",\"audio_content\":\"\"}}],\"created\":1774337469,\"model\":\"MiniMax-M2.7\",\"object\":\"chat.completion.chunk\",\"usage\":null,\"input_sensitive\":false,\"output_sensitive\":false,\"input_sensitive_type\":0,\"output_sensitive_type\":0,\"output_sensitive_int\":0}",
+        "data: {\"id\":\"061170bd2bd864b31e066541d16079c6\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"/to/my-project/\\n├── README.md\\n├── src/\\n├── package.json\\n├── main.py\\n└── .gitignore\\n```\\n\\n### 项目简介\\n这是一个\",\"role\":\"assistant\",\"name\":\"MiniMax AI\",\"audio_content\":\"\"}}],\"created\":1774337469,\"model\":\"MiniMax-M2.7\",\"object\":\"chat.completion.chunk\",\"usage\":null,\"input_sensitive\":false,\"output_sensitive\":false,\"input_sensitive_type\":0,\"output_sensitive_type\":0,\"output_sensitive_int\":0}",
+        "data: {\"id\":\"061170bd2bd864b31e066541d16079c6\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" **Python Web 项目**，主要使用 FastAPI 框架构建。\\n\\n### 核心功能\\n- 🌐\",\"role\":\"assistant\",\"name\":\"MiniMax AI\",\"audio_content\":\"\"}}],\"created\":1774337469,\"model\":\"MiniMax-M2.7\",\"object\":\"chat.completion.chunk\",\"usage\":null,\"input_sensitive\":false,\"output_sensitive\":false,\"input_sensitive_type\":0,\"output_sensitive_type\":0,\"output_sensitive_int\":0}",
+        "data: {\"id\":\"061170bd2bd864b31e066541d16079c6\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" **RESTful API** - 提供标准的 REST 接口\\n- 🗄️ **数据库 ORM** - 使用 SQLAlchemy 进行数据库\",\"role\":\"assistant\",\"name\":\"MiniMax AI\",\"audio_content\":\"\"}}],\"created\":1774337469,\"model\":\"MiniMax-M2.7\",\"object\":\"chat.completion.chunk\",\"usage\":null,\"input_sensitive\":false,\"output_sensitive\":false,\"input_sensitive_type\":0,\"output_sensitive_type\":0,\"output_sensitive_int\":0}",
+        "data: {\"id\":\"061170bd2bd864b31e066541d16079c6\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"操作\\n- 🔐 **用户认证** - 实现 JWT 身份验证\\n- 🔄 **实时通信**\",\"role\":\"assistant\",\"name\":\"MiniMax AI\",\"audio_content\":\"\"}}],\"created\":1774337469,\"model\":\"MiniMax-M2.7\",\"object\":\"chat.completion.chunk\",\"usage\":null,\"input_sensitive\":false,\"output_sensitive\":false,\"input_sensitive_type\":0,\"output_sensitive_type\":0,\"output_sensitive_int\":0}",
+        "data: {\"id\":\"061170bd2bd864b31e066541d16079c6\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" - 支持 WebSocket 双向通信\\n\\n### 技术栈\\n| 类别 | 技术 |\\n|------|------|\\n| 语言 | Python 3.11+ |\\n| \",\"role\":\"assistant\",\"name\":\"MiniMax AI\",\"audio_content\":\"\"}}],\"created\":1774337469,\"model\":\"MiniMax-M2.7\",\"object\":\"chat.completion.chunk\",\"usage\":null,\"input_sensitive\":false,\"output_sensitive\":false,\"input_sensitive_type\":0,\"output_sensitive_type\":0,\"output_sensitive_int\":0}",
+        "data: {\"id\":\"061170bd2bd864b31e066541d16079c6\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"框架 | FastAPI |\\n| ORM | SQLAlchemy |\\n| 数据验证 | Pydantic |\\n\\n这是一个现代化的后端服务项目，适合构建\",\"role\":\"assistant\",\"name\":\"MiniMax AI\",\"audio_content\":\"\"}}],\"created\":1774337469,\"model\":\"MiniMax-M2.7\",\"object\":\"chat.completion.chunk\",\"usage\":null,\"input_sensitive\":false,\"output_sensitive\":false,\"input_sensitive_type\":0,\"output_sensitive_type\":0,\"output_sensitive_int\":0}",
+        "data: {\"id\":\"061170bd2bd864b31e066541d16079c6\",\"choices\":[{\"finish_reason\":\"stop\",\"index\":0,\"delta\":{\"content\":\" API 服务端应用。\",\"role\":\"assistant\",\"name\":\"MiniMax AI\",\"audio_content\":\"\"}}],\"created\":1774337469,\"model\":\"MiniMax-M2.7\",\"object\":\"chat.completion.chunk\",\"usage\":null,\"input_sensitive\":false,\"output_sensitive\":false,\"input_sensitive_type\":0,\"output_sensitive_type\":0,\"output_sensitive_int\":0}"
+      ],
+      "reasoning_content": "根据文件列表和README.md的内容，我可以总结这个项目的信息了。",
+      "content": "## 项目分析结果\n\n### 项目文件结构\n```\n/path/to/my-project/\n├── README.md\n├── src/\n├── package.json\n├── main.py\n└── .gitignore\n```\n\n### 项目简介\n这是一个 **Python Web 项目**，主要使用 FastAPI 框架构建。\n\n### 核心功能\n- 🌐 **RESTful API** - 提供标准的 REST 接口\n- 🗄️ **数据库 ORM** - 使用 SQLAlchemy 进行数据库操作\n- 🔐 **用户认证** - 实现 JWT 身份验证\n- 🔄 **实时通信** - 支持 WebSocket 双向通信\n\n### 技术栈\n| 类别 | 技术 |\n|------|------|\n| 语言 | Python 3.11+ |\n| 框架 | FastAPI |\n| ORM | SQLAlchemy |\n| 数据验证 | Pydantic |\n\n这是一个现代化的后端服务项目，适合构建 API 服务端应用。"
+    }
+  ]
+}
