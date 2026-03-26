@@ -2,12 +2,55 @@
 import json
 import logging
 import httpx
-
+import asyncio
+import typing
 from .recorder import (
     write_request,
     write_response,
-    get_recording_context,
 )
+from .transport import get_recording_ctx, clear_recording_ctx
+
+
+class TeeAsyncByteStream(httpx.AsyncByteStream):
+    """旁路拦截流，迭代时复制数据，关闭时触发回调"""
+
+    def __init__(self, original_stream: httpx.AsyncByteStream, on_close: typing.Callable[[list[bytes]], None], logger: logging.Logger = None):
+        self.original_stream = original_stream
+        self.on_close = on_close
+        self.chunks: list[bytes] = []
+        self.logger = logger
+        self._iteration_started = False
+        self._iteration_count = 0
+
+    async def __aiter__(self) -> typing.AsyncIterator[bytes]:
+        self._iteration_started = True
+        self._iteration_count += 1
+        if self.logger:
+            self.logger.debug(f"[TeeStream] Starting iteration #{self._iteration_count}")
+        try:
+            async for chunk in self.original_stream:
+                self.chunks.append(chunk)
+                if self.logger:
+                    self.logger.debug(f"[TeeStream] iteration #{self._iteration_count} yielded {len(chunk)} bytes")
+                yield chunk
+            if self.logger:
+                self.logger.debug(f"[TeeStream] iteration #{self._iteration_count} completed, total chunks: {len(self.chunks)}")
+        except Exception as e:
+            if self.logger:
+                self.logger.error(f"[TeeStream] iteration #{self._iteration_count} error: {e}")
+            raise
+
+    async def aclose(self) -> None:
+        if self.logger:
+            self.logger.debug(f"[TeeStream] aclose() called, chunks collected: {len(self.chunks)}")
+        await self.original_stream.aclose()
+        try:
+            self.on_close(self.chunks)
+            if self.logger:
+                self.logger.debug(f"[TeeStream] on_close callback completed")
+        except Exception as e:
+            if self.logger:
+                self.logger.error(f"[TeeStream] on_close callback error: {e}")
 
 
 class RecordingInterceptor:
@@ -16,17 +59,28 @@ class RecordingInterceptor:
     def __init__(self, logger: logging.Logger):
         self.logger = logger
 
+    @staticmethod
+    def _get_content_type(response: httpx.Response) -> str:
+        content_type = response.headers.get("content-type", "")
+        if isinstance(content_type, bytes):
+            return content_type.decode("utf-8", errors="replace")
+        return content_type.lower()
+
     async def on_request(self, request: httpx.Request, ctx: dict) -> None:
         """录制后端请求"""
-        recording_ctx = get_recording_context()
+        recording_ctx = get_recording_ctx()
         if not recording_ctx:
+            self.logger.debug("[Recording] on_request: no recording context")
             return
 
         prefix = recording_ctx.get("prefix")
         suffix = recording_ctx.get("suffix")
 
         if not prefix or not suffix:
+            self.logger.debug(f"[Recording] on_request: missing prefix or suffix, prefix={prefix}, suffix={suffix}")
             return
+
+        self.logger.info(f"[Recording] on_request: {request.method} {request.url}")
 
         request_type = recording_ctx.get("request_type", "request").replace("client", "backend")
 
@@ -53,7 +107,7 @@ class RecordingInterceptor:
 
     async def on_response(self, response: httpx.Response, ctx: dict, timing_ms: float) -> None:
         """录制后端响应"""
-        recording_ctx = get_recording_context()
+        recording_ctx = get_recording_ctx()
         if not recording_ctx:
             return
 
@@ -69,40 +123,58 @@ class RecordingInterceptor:
 
         chunks = None
         parsed_body = None
+        content_type = self._get_content_type(response)
+
+        if "text/event-stream" in content_type:
+            # 捕获闭包所需的上下文变量
+            ctx_prefix = prefix
+            ctx_suffix = suffix
+            ctx_response_type = response_type
+            ctx_status_code = status_code
+            ctx_timing_ms = timing_ms
+
+            def on_stream_close(collected_chunks: list[bytes]) -> None:
+                try:
+                    response_body = b"".join(collected_chunks)
+                    chunks_list = []
+                    for chunk in response_body.split(b'\n'):
+                        if chunk:
+                            chunks_list.append(chunk.decode('utf-8', errors='replace'))
+
+                    self.logger.info(f"[Recording] Stream closed, collected {len(chunks_list)} chunks")
+                    write_response(
+                        prefix=ctx_prefix,
+                        suffix=ctx_suffix,
+                        response_type=ctx_response_type,
+                        status_code=ctx_status_code,
+                        timing_ms=ctx_timing_ms,
+                        chunks=chunks_list,
+                        error=None
+                    )
+                    # 流结束后清除 context
+                    clear_recording_ctx()
+                except Exception as e:
+                    self.logger.warning(f"录制流式响应失败: {e}")
+                    clear_recording_ctx()
+
+            # 替换原始的 stream 为旁路拦截器
+            self.logger.info(f"[Recording] Wrapping stream with TeeAsyncByteStream, content-type: {content_type}")
+            response.stream = TeeAsyncByteStream(response.stream, on_stream_close, logger=self.logger)
+            return
 
         try:
-            # 先调用 aread() 确保响应体被完全读取
             response_body = await response.aread()
 
             if response_body:
-                # 确保 response_body 是 bytes
                 if isinstance(response_body, str):
                     response_body = response_body.encode('utf-8')
 
-                # 检查 content-type
-                content_type = response.headers.get('content-type', '')
-                if isinstance(content_type, bytes):
-                    content_type = content_type.decode('utf-8', errors='replace')
-
-                # 检查是否是 SSE
-                is_sse = 'text/event-stream' in content_type or b'[DONE]' in response_body
-
-                if is_sse:
-                    # SSE 流式响应
-                    chunks = []
-                    for chunk in response_body.split(b'\n'):
-                        if chunk:
-                            decoded = chunk.decode('utf-8', errors='replace')
-                            chunks.append(decoded)
-                else:
-                    # 非流式响应，尝试解析 JSON
-                    try:
-                        parsed_body = json.loads(response_body.decode('utf-8'))
-                    except (json.JSONDecodeError, UnicodeDecodeError):
-                        parsed_body = {"_raw": response_body.decode('utf-8', errors='replace')}
+                try:
+                    parsed_body = json.loads(response_body.decode('utf-8'))
+                except (json.JSONDecodeError, UnicodeDecodeError):
+                    parsed_body = {"_raw": response_body.decode('utf-8', errors='replace')}
 
         except RuntimeError as e:
-            # 流式响应可能无法在这里读取，跳过录制响应体
             if "sync iterator" in str(e) or "async stream" in str(e):
                 self.logger.debug(f"录制拦截器跳过流式响应读取: {e}")
             else:
@@ -120,17 +192,22 @@ class RecordingInterceptor:
             chunks=chunks,
             error=None
         )
+        # 清除录制上下文
+        clear_recording_ctx()
 
     async def on_error(self, error: Exception, ctx: dict, timing_ms: float) -> None:
         """录制后端错误"""
-        recording_ctx = get_recording_context()
+        self.logger.error(f"[Recording] on_error: {error}")
+        recording_ctx = get_recording_ctx()
         if not recording_ctx:
+            self.logger.debug("[Recording] on_error: no recording context")
             return
 
         prefix = recording_ctx.get("prefix")
         suffix = recording_ctx.get("suffix")
 
         if not prefix or not suffix:
+            self.logger.debug(f"[Recording] on_error: missing prefix or suffix")
             return
 
         response_type = recording_ctx.get("response_type", "response").replace("client", "backend")
@@ -143,3 +220,5 @@ class RecordingInterceptor:
             timing_ms=timing_ms,
             error=str(error)
         )
+        # 清除录制上下文
+        clear_recording_ctx()

@@ -45,9 +45,15 @@ class RecordingMiddleware:
             body_json = None
             body_bytes = b""
 
-        # 构造一个可重放的 receive，因为上方的 request.body() 已经消费了原生的 receive
+        body_sent = False
+        original_receive = receive
+
         async def replay_receive() -> dict:
-            return {"type": "http.request", "body": body_bytes, "more_body": False}
+            nonlocal body_sent
+            if not body_sent:
+                body_sent = True
+                return {"type": "http.request", "body": body_bytes, "more_body": False}
+            return await original_receive()
 
         # 组装前缀：将 / 替换为 _，去除开头的下划线
         prefix = request.url.path.replace("/", "_").strip("_")

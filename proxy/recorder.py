@@ -77,7 +77,8 @@ def write_request(prefix: str, suffix: str, request_type: str, endpoint: str, me
 
 def write_response(prefix: str, suffix: str, response_type: str, status_code: int,
                    timing_ms: float, body: Optional[dict] = None,
-                   chunks: Optional[list[str]] = None, error: Optional[str] = None) -> None:
+                   chunks: Optional[list[str]] = None, error: Optional[str] = None,
+                   headers: Optional[dict] = None) -> None:
     """写入响应录制文件"""
     target_dir = ensure_recordings_dir()
     filename = f"{prefix}__{suffix}__{response_type.lower().replace(' ', '_')}.json"
@@ -92,6 +93,8 @@ def write_response(prefix: str, suffix: str, response_type: str, status_code: in
         "timing_ms": timing_ms,
         "error": error
     }
+    if headers is not None:
+        data["headers"] = dict(headers)
     if chunks is not None:
         data["chunks"] = chunks
     else:

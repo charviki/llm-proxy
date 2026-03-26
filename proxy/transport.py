@@ -5,6 +5,15 @@ from typing import Optional, Sequence
 import httpx
 
 from .interceptors import Interceptor
+from .recorder import get_recording_context, clear_recording_context
+
+
+def get_recording_ctx() -> dict:
+    return get_recording_context()
+
+
+def clear_recording_ctx() -> None:
+    clear_recording_context()
 
 
 class ProxyTransport(httpx.AsyncHTTPTransport):
@@ -18,10 +27,9 @@ class ProxyTransport(httpx.AsyncHTTPTransport):
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
         """处理请求，依次调用拦截器"""
-        # 构建上下文
-        ctx = {"request": request}
+        recording_ctx = get_recording_ctx()
+        ctx = {"request": request, **recording_ctx}
 
-        # 请求前拦截
         for interceptor in self._interceptors:
             if hasattr(interceptor, 'on_request'):
                 await interceptor.on_request(request, ctx)
@@ -32,7 +40,6 @@ class ProxyTransport(httpx.AsyncHTTPTransport):
             response = await self._app.handle_async_request(request)
             timing_ms = (time.perf_counter() - start_time) * 1000
 
-            # 响应后拦截
             for interceptor in reversed(self._interceptors):
                 if hasattr(interceptor, 'on_response'):
                     await interceptor.on_response(response, ctx, timing_ms)
@@ -42,9 +49,9 @@ class ProxyTransport(httpx.AsyncHTTPTransport):
         except Exception as e:
             timing_ms = (time.perf_counter() - start_time) * 1000
 
-            # 错误拦截
             for interceptor in reversed(self._interceptors):
                 if hasattr(interceptor, 'on_error'):
                     await interceptor.on_error(e, ctx, timing_ms)
+
             self.logger.exception(f"代理传输层处理请求失败: {e}")
             raise
