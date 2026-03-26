@@ -10,6 +10,11 @@ from .converter import (
     create_parser,
     ReasoningContent
 )
+from .middleware import RecordingMiddleware
+from .transport import ProxyTransport
+from .interceptors import Interceptor
+from .recording_interceptor import RecordingInterceptor
+from .recorder import RecordingContext
 
 __all__ = [
     "StreamSimulator",
@@ -20,5 +25,10 @@ __all__ = [
     "ReasoningContentChunkConverter",
     "ChunkConverterMatcher",
     "create_parser",
-    "ReasoningContent"
+    "ReasoningContent",
+    "RecordingMiddleware",
+    "ProxyTransport",
+    "Interceptor",
+    "RecordingInterceptor",
+    "RecordingContext",
 ]

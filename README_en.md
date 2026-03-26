@@ -34,6 +34,7 @@ Many modern AI applications (like certain desktop clients, IDE plugins, etc.) ha
   - **Exact Mapping (API Routing)**: Allows seamless translation of a specific model name requested by the client (e.g., `my-custom-model-v1`) into the actual model name required by the backend (e.g., `claude-3-5-sonnet`), and routes it to a designated private endpoint. Perfect for "disguising" or "renaming" models for the client.
 - **Intelligent Reasoning Parsing**: Built-in parsers to adapt to the reasoning/thinking process output formats of different models (extracting specific `<think>` tags or separate `reasoning` fields), uniformly converting them into the standard OpenAI protocol format (e.g., `reasoning_content`) before returning to the client, ensuring correct rendering of the thought process on the client UI.
 - **Stream Simulation**: For backend services that do not support streaming output, the proxy can automatically downgrade to sending non-streaming requests. It then takes the complete response and simulates a standard SSE streaming output via the `StreamSimulator`, perfectly maintaining compatibility with client applications that strictly require streaming input.
+- **Runtime Traffic Recording**: Using FastAPI Middleware and a pluggable interceptor architecture, the proxy can record client request/response and backend request/response in real-time to JSON files in the `recordings/` directory, facilitating debugging and playback testing.
 
 ## ⚙️ How It Works
 

@@ -1,5 +1,6 @@
 """思考内容转换器 - 可扩展架构，支持不同模型的思考内容格式"""
 import json
+import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Optional
@@ -16,8 +17,9 @@ class ReasoningContent:
 class BaseChunkConverter:
     """默认 Chunk 转换器 - 兜底透传，仅做 model ID 回映射"""
 
-    def __init__(self, model_id: str):
+    def __init__(self, model_id: str, logger: logging.Logger):
         self.model_id = model_id
+        self.logger = logger
 
     def parse(self, data_str: str) -> Optional[str]:
         """
@@ -28,7 +30,10 @@ class BaseChunkConverter:
             if "model" in data:
                 data["model"] = self.model_id
             return json.dumps(data, ensure_ascii=False, separators=(',', ':'))
-        except Exception:
+        except json.JSONDecodeError:
+            return data_str
+        except Exception as e:
+            self.logger.exception(f"BaseChunkConverter 解析失败: {e}")
             return data_str
 
     def process_chunk(self, delta: dict) -> ReasoningContent:
@@ -57,8 +62,8 @@ class ThinkState(IntEnum):
 class AbstractReasoningConverter(BaseChunkConverter, ABC):
     """思考内容转换器抽象基类 - 原地修改 delta，提取思考内容"""
 
-    def __init__(self, model_id: str):
-        super().__init__(model_id)
+    def __init__(self, model_id: str, logger: logging.Logger):
+        super().__init__(model_id, logger)
         self.think_state = ThinkState.UNSTARTED
 
     def parse(self, data_str: str) -> Optional[str]:
@@ -73,7 +78,10 @@ class AbstractReasoningConverter(BaseChunkConverter, ABC):
                 if "model" in data:
                     data["model"] = self.model_id
                 return json.dumps(data, ensure_ascii=False, separators=(',', ':'))
-            except Exception:
+            except json.JSONDecodeError:
+                return data_str
+            except Exception as e:
+                self.logger.exception(f"AbstractReasoningConverter 快速透传解析失败: {e}")
                 return data_str
 
         try:
@@ -107,7 +115,10 @@ class AbstractReasoningConverter(BaseChunkConverter, ABC):
                     return None
 
             return json.dumps(data, ensure_ascii=False, separators=(',', ':'))
-        except Exception:
+        except json.JSONDecodeError:
+            return data_str
+        except Exception as e:
+            self.logger.exception(f"AbstractReasoningConverter 解析失败: {e}")
             return data_str
 
     @abstractmethod
@@ -122,8 +133,8 @@ class ThinkTagChunkConverter(AbstractReasoningConverter):
     用于 Claude、MiniMax 等在 content 中使用标签包裹思考内容的模型
     """
 
-    def __init__(self, model_id: str):
-        super().__init__(model_id)
+    def __init__(self, model_id: str, logger: logging.Logger):
+        super().__init__(model_id, logger)
 
     def process_chunk(self, delta: dict) -> ReasoningContent:
         """处理 delta，提取 <think> 和 </think> 标签内容"""
@@ -177,8 +188,8 @@ class ThinkTagChunkConverter(AbstractReasoningConverter):
 class GeminiChunkConverter(AbstractReasoningConverter):
     """Google Gemini 思考转换器 - 处理 reasoning 和 reasoning_details 字段"""
 
-    def __init__(self, model_id: str):
-        super().__init__(model_id)
+    def __init__(self, model_id: str, logger: logging.Logger):
+        super().__init__(model_id, logger)
 
     def process_chunk(self, delta: dict) -> ReasoningContent:
         """处理 delta，直接提取 reasoning 字段"""
@@ -197,8 +208,8 @@ class ReasoningContentChunkConverter(AbstractReasoningConverter):
     用于 DeepSeek 等使用 reasoning_content 字段的模型
     """
 
-    def __init__(self, model_id: str):
-        super().__init__(model_id)
+    def __init__(self, model_id: str, logger: logging.Logger):
+        super().__init__(model_id, logger)
 
     def process_chunk(self, delta: dict) -> ReasoningContent:
         """提取 reasoning_content"""
@@ -211,21 +222,22 @@ class ReasoningContentChunkConverter(AbstractReasoningConverter):
         return ReasoningContent(reasoning=reasoning, content=content)
 
 
-def create_parser(parser_type: str, model_id: str) -> BaseChunkConverter:
+def create_parser(parser_type: str, model_id: str, logger: logging.Logger) -> BaseChunkConverter:
     """根据解析器类型创建解析器实例"""
     if parser_type == "think_tag":
-        return ThinkTagChunkConverter(model_id)
+        return ThinkTagChunkConverter(model_id, logger)
     elif parser_type == "reasoning":
-        return GeminiChunkConverter(model_id)
+        return GeminiChunkConverter(model_id, logger)
     else:
-        return ReasoningContentChunkConverter(model_id)
+        return ReasoningContentChunkConverter(model_id, logger)
 
 
 class ChunkConverterMatcher:
     """解析器匹配器 - 根据模型名称关键词匹配解析器"""
 
-    def __init__(self, parser_config: dict[str, str]):
+    def __init__(self, parser_config: dict[str, str], logger: logging.Logger):
         self.parser_config = parser_config
+        self.logger = logger
 
     def get_parser(self, model_id: str) -> BaseChunkConverter:
         """根据模型 ID 获取合适的解析器，默认返回 BaseChunkConverter 作为兜底"""
@@ -233,6 +245,6 @@ class ChunkConverterMatcher:
 
         for keyword, parser_type in self.parser_config.items():
             if keyword != "default" and keyword in model_lower:
-                return create_parser(parser_type, model_id)
+                return create_parser(parser_type, model_id, self.logger)
 
-        return BaseChunkConverter(model_id)
+        return BaseChunkConverter(model_id, self.logger)

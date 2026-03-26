@@ -1,7 +1,6 @@
 """OpenAI 代理处理器 - 核心代理逻辑"""
 import asyncio
 import logging
-import copy
 import json
 from functools import wraps
 from typing import Optional
@@ -101,6 +100,7 @@ class ProxyHandler:
                 if req_json is None:
                     return JSONResponse(status_code=400, content={"error": "无效的JSON请求体"})
             except Exception as e:
+                self.logger.exception(f"[{endpoint}] JSON解析失败: {str(e)}")
                 return JSONResponse(status_code=400, content={"error": f"JSON解析失败: {str(e)}"})
 
             self.logger.debug(f"[{endpoint}] 请求头: {dict(request.headers)}")
@@ -148,10 +148,10 @@ class ProxyHandler:
                 )
 
         except httpx.RequestError as e:
-            self.logger.error(f"[{endpoint}] 请求异常: {str(e)}")
+            self.logger.warning(f"[{endpoint}] 请求异常: {str(e)}") # 属于预期内的网络异常，使用 warning 即可，没必要打印长堆栈
             return JSONResponse(status_code=503, content={"error": f"请求异常: {str(e)}"})
         except Exception as e:
-            self.logger.error(f"[{endpoint}] 处理请求时发生错误: {str(e)}")
+            self.logger.exception(f"[{endpoint}] 处理请求时发生内部错误: {str(e)}")
             return JSONResponse(status_code=500, content={"error": f"内部服务器错误: {str(e)}"})
 
     async def _handle_stream_request(
@@ -201,7 +201,7 @@ class ProxyHandler:
                         delay = 1.0 * (2 ** attempt)
                         # 仅 5xx 和网络错误重试
                         if isinstance(e, httpx.HTTPStatusError) and not (500 <= e.response.status_code < 600):
-                            self.logger.error(f"[{endpoint}] 请求失败（不重试）: {e}")
+                            self.logger.warning(f"[{endpoint}] 请求失败（不重试）: {e}")
                             break
                         self.logger.warning(f"[{endpoint}] 请求失败 (attempt {attempt + 1}/10), {delay:.1f}s 后重试: {e}")
                         await asyncio.sleep(delay)
@@ -209,7 +209,7 @@ class ProxyHandler:
                         self.logger.error(f"[{endpoint}] 请求失败，已达最大重试次数 (10): {e}")
                 except Exception as e:
                     last_exception = e
-                    self.logger.error(f"[{endpoint}] 转发流式请求失败: {e}")
+                    self.logger.exception(f"[{endpoint}] 转发流式请求发生未知错误: {e}")
                     break
 
             # 所有重试都失败
@@ -228,7 +228,7 @@ class ProxyHandler:
                     full_response_str = full_response_bytes.decode('utf-8', errors='replace')
                     self.logger.debug(f"[{endpoint}] 完整流式响应内容:\n{full_response_str}")
                 except Exception as e:
-                    self.logger.error(f"[{endpoint}] 记录完整流式响应失败: {e}")
+                    self.logger.warning(f"[{endpoint}] 记录完整流式响应失败: {e}") # 边缘错误，warning 即可
 
         return StreamingResponse(stream_generator(), media_type="text/event-stream", headers=_SSE_HEADERS)
 
@@ -248,7 +248,7 @@ class ProxyHandler:
         try:
             response_json = response.json()
         except Exception as e:
-            self.logger.error(f"[{endpoint}] 解析响应JSON失败: {e}, 状态码: {response.status_code}, 响应文本: {response.text[:200]}")
+            self.logger.warning(f"[{endpoint}] 解析响应JSON失败: {e}, 状态码: {response.status_code}, 响应文本: {response.text[:200]}") # 这通常是上游返回了 html 或其他非 json 格式，直接 warning 即可
             return JSONResponse(status_code=502, content={"error": f"上游服务返回了非JSON格式的响应，状态码: {response.status_code}, 响应: {response.text[:100]}..."})
 
         self.logger.debug(f"[{endpoint}] 响应体: {json.dumps(response_json, ensure_ascii=False)}")
@@ -277,13 +277,13 @@ class ProxyHandler:
                         message["tool_calls"] = saved_tool_calls
 
             return StreamingResponse(
-                StreamSimulator.simulate_chat_completion(response_json, custom_model_id),
+                StreamSimulator.simulate_chat_completion(response_json, custom_model_id, self.logger),
                 media_type='text/event-stream',
                 headers=_SSE_HEADERS
             )
         elif original_stream and endpoint == "completions":
             return StreamingResponse(
-                StreamSimulator.simulate_completions(response_json, custom_model_id),
+                StreamSimulator.simulate_completions(response_json, custom_model_id, self.logger),
                 media_type='text/event-stream',
                 headers=_SSE_HEADERS
             )

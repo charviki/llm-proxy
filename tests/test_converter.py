@@ -11,16 +11,21 @@ from proxy.converter import (
     ThinkState
 )
 
+import logging
+
+# 伪造一个 logger 用于测试
+test_logger = logging.getLogger("test_logger")
+
 def test_think_tag_converter():
     # 测试有前缀正文的情况（目前约定这种情况下就不提取后续标签了）
-    converter_prefix = ThinkTagChunkConverter("test-model")
+    converter_prefix = ThinkTagChunkConverter("test-model", test_logger)
     res = converter_prefix.process_chunk({"content": "Hello "})
     assert res.content == "Hello "
     assert res.reasoning == ""
     assert converter_prefix.think_state == ThinkState.FINISHED
 
     # 新起一个请求测试正常的 Think tag 流
-    converter = ThinkTagChunkConverter("test-model")
+    converter = ThinkTagChunkConverter("test-model", test_logger)
 
     # Think tag start (必须在第一个有效 content chunk 里)
     res = converter.process_chunk({"content": "<think>This is "})
@@ -39,14 +44,14 @@ def test_think_tag_converter():
     assert converter.think_state == ThinkState.FINISHED
 
     # Test single chunk with full think tags
-    conv2 = ThinkTagChunkConverter("test-model")
+    conv2 = ThinkTagChunkConverter("test-model", test_logger)
     res2 = conv2.process_chunk({"content": "A<think>B</think>C"})
     assert res2.content == "AC"
     assert res2.reasoning == "B"
     assert conv2.think_state == ThinkState.FINISHED
 
 def test_gemini_reasoning_converter():
-    converter = GeminiChunkConverter("test-model")
+    converter = GeminiChunkConverter("test-model", test_logger)
     delta = {"reasoning": "thought", "reasoning_details": {}, "content": "text"}
 
     res = converter.process_chunk(delta)
@@ -56,7 +61,7 @@ def test_gemini_reasoning_converter():
     assert "reasoning" not in delta
 
 def test_reasoning_content_converter():
-    converter = ReasoningContentChunkConverter("test-model")
+    converter = ReasoningContentChunkConverter("test-model", test_logger)
     delta = {"reasoning_content": "some thinking", "content": "actual content"}
 
     res = converter.process_chunk(delta)
@@ -65,10 +70,10 @@ def test_reasoning_content_converter():
     assert "reasoning_content" not in delta
 
 def test_create_parser():
-    assert isinstance(create_parser("think_tag", "m"), ThinkTagChunkConverter)
-    assert isinstance(create_parser("reasoning", "m"), GeminiChunkConverter)
-    assert isinstance(create_parser("reasoning_content", "m"), ReasoningContentChunkConverter)
-    assert isinstance(create_parser("unknown_type", "m"), ReasoningContentChunkConverter)
+    assert isinstance(create_parser("think_tag", "m", test_logger), ThinkTagChunkConverter)
+    assert isinstance(create_parser("reasoning", "m", test_logger), GeminiChunkConverter)
+    assert isinstance(create_parser("reasoning_content", "m", test_logger), ReasoningContentChunkConverter)
+    assert isinstance(create_parser("unknown_type", "m", test_logger), ReasoningContentChunkConverter)
 
 def test_chunk_converter_matcher():
     config = {
@@ -77,7 +82,7 @@ def test_chunk_converter_matcher():
         "deepseek": "reasoning_content",
         "default": "reasoning_content"
     }
-    matcher = ChunkConverterMatcher(config)
+    matcher = ChunkConverterMatcher(config, test_logger)
 
     # Match keywords
     assert isinstance(matcher.get_parser("anthropic/claude-3"), ThinkTagChunkConverter)
@@ -93,7 +98,7 @@ def test_chunk_converter_matcher():
 
 def test_base_converter_parse_replaces_model_id():
     """BaseChunkConverter.parse() 应替换 model ID"""
-    converter = BaseChunkConverter("custom/my-model")
+    converter = BaseChunkConverter("custom/my-model", test_logger)
     data_str = json.dumps({
         "id": "chatcmpl-123",
         "model": "backend-model",
@@ -106,7 +111,7 @@ def test_base_converter_parse_replaces_model_id():
 
 def test_base_converter_parse_preserves_tool_calls():
     """BaseChunkConverter.parse() 应透传 tool_calls delta"""
-    converter = BaseChunkConverter("custom/my-model")
+    converter = BaseChunkConverter("custom/my-model", test_logger)
     data_str = json.dumps({
         "id": "chatcmpl-123",
         "model": "backend-model",
@@ -129,7 +134,7 @@ def test_base_converter_parse_preserves_tool_calls():
 
 def test_reasoning_converter_preserves_tool_calls_delta():
     """AbstractReasoningConverter.parse() 不应丢弃包含 tool_calls 的 delta"""
-    converter = GeminiChunkConverter("custom/gemini-model")
+    converter = GeminiChunkConverter("custom/gemini-model", test_logger)
     # 模拟只有 tool_calls 的 delta（无 content、无 reasoning）
     data_str = json.dumps({
         "id": "chatcmpl-123",
@@ -154,7 +159,7 @@ def test_reasoning_converter_preserves_tool_calls_delta():
 
 def test_reasoning_converter_preserves_tool_calls_with_reasoning():
     """当 delta 同时包含 reasoning 和 tool_calls 时，清理 reasoning 后应保留 tool_calls"""
-    converter = GeminiChunkConverter("custom/model")
+    converter = GeminiChunkConverter("custom/model", test_logger)
     data_str = json.dumps({
         "id": "chatcmpl-456",
         "model": "backend-model",
@@ -183,7 +188,7 @@ def test_reasoning_converter_preserves_tool_calls_with_reasoning():
 
 def test_reasoning_converter_model_id_remapping():
     """流式响应中 model ID 应被替换为客户端请求的自定义模型名"""
-    converter = ReasoningContentChunkConverter("my-custom/deepseek-r1")
+    converter = ReasoningContentChunkConverter("my-custom/deepseek-r1", test_logger)
     data_str = json.dumps({
         "id": "chatcmpl-789",
         "model": "deepseek-r1-internal",
@@ -198,7 +203,7 @@ def test_reasoning_converter_model_id_remapping():
 
 def test_reasoning_converter_finished_state_model_remapping():
     """思考结束后的极速透传路径也应做 model ID 回映射"""
-    converter = ThinkTagChunkConverter("my-custom/claude")
+    converter = ThinkTagChunkConverter("my-custom/claude", test_logger)
     # 先让 converter 进入 FINISHED 状态
     converter.think_state = ThinkState.FINISHED
 

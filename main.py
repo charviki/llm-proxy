@@ -7,24 +7,33 @@ import uvicorn
 from fastapi import FastAPI
 
 from config import ConfigLoader
-from proxy import ProxyHandler, ChunkConverterMatcher
+from proxy import ProxyHandler, ChunkConverterMatcher, RecordingMiddleware, ProxyTransport, RecordingInterceptor
 from routes import register_routes
 
 logger = logging.getLogger('llm_proxy')
 
 proxy_handler: ProxyHandler
+config = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期管理"""
-    global proxy_handler
+    global proxy_handler, config
 
     # 设置连接池限制以提高高并发情况下的网络处理能力
     limits = httpx.Limits(max_keepalive_connections=200, max_connections=2000)
     # 分段超时：连接快速失败，读取留足够时间给 Agent 长推理任务
     timeout = httpx.Timeout(connect=10.0, read=600.0, write=30.0, pool=30.0)
-    client = httpx.AsyncClient(timeout=timeout, limits=limits)
+
+    # 构建拦截器列表
+    interceptors = []
+    if config.recording.enabled:
+        interceptors.append(RecordingInterceptor(logger=logger))
+
+    transport = ProxyTransport(logger=logger, interceptors=interceptors)
+    client = httpx.AsyncClient(timeout=timeout, limits=limits, transport=transport)
+
     await proxy_handler.set_client(client)
     logger.info("初始化 httpx.AsyncClient 成功")
 
@@ -36,6 +45,7 @@ async def lifespan(app: FastAPI):
 
 def main() -> None:
     """主函数 - 简化为配置加载和服务启动"""
+    global config
     try:
         config = ConfigLoader().load()
     except (FileNotFoundError, ValueError, RuntimeError) as e:
@@ -45,7 +55,7 @@ def main() -> None:
     log_level = logging.DEBUG if config.server.debug else logging.INFO
     # 清理可能已经存在的处理器，防止重复打印
     logging.getLogger().handlers.clear()
-    
+
     # 移除所有 uvicorn 相关的 logger 的 handler
     for name in logging.root.manager.loggerDict:
         if name.startswith('uvicorn'):
@@ -61,7 +71,7 @@ def main() -> None:
 
     logger.info("正在启动 LLM-Proxy...")
 
-    parser_matcher = ChunkConverterMatcher(config.chunk_parsers)
+    parser_matcher = ChunkConverterMatcher(config.chunk_parsers, logger=logger)
 
     global proxy_handler
     proxy_handler = ProxyHandler(
@@ -71,6 +81,11 @@ def main() -> None:
     )
 
     app = FastAPI(title="LLM-Proxy", lifespan=lifespan)
+
+    # 添加录制中间件
+    if config.recording.enabled:
+        app.add_middleware(RecordingMiddleware, config=config, logger=logger)
+
     register_routes(app, handler=proxy_handler)
 
     for api in config.backends.apis:

@@ -11,6 +11,11 @@
 | **`handler.py`** | **核心代理处理器 (`ProxyHandler`)**：<br>接管请求、修改模型 ID、注入鉴权头，通过 `httpx` 向后端发起带有重试机制的请求。根据后端能力决定走原生流式转发还是非流式降级。 |
 | **`converter.py`** | **响应清洗引擎**：<br>匹配对应的解析器，处理后端返回的不同格式。例如统一提取 `<think>` 标签或 `reasoning` 字段的内容，转换为标准的推理内容输出。 |
 | **`stream.py`** | **流式模拟器 (`StreamSimulator`)**：<br>当后端仅支持非流式，但客户端要求流式时，将完整的 JSON 响应按步长切片，伪造标准的 SSE 流式输出。 |
+| **`transport.py`** | **代理传输层 (`ProxyTransport`)**：<br>包装 httpx 传输层，通过可插拔的拦截器架构扩展功能。持有 `Interceptor` 列表，在请求前、响应后、错误时调用。 |
+| **`interceptors.py`** | **拦截器接口 (`Interceptor`)**：<br>定义拦截器协议，包含 `on_request`、`on_response`、`on_error` 三个方法。实现此接口即可扩展自定义拦截器。 |
+| **`recording_interceptor.py`** | **录制拦截器 (`RecordingInterceptor`)**：<br>实现 `Interceptor` 接口，录制后端请求/响应到 `recordings/` 目录的 JSON 文件。 |
+| **`middleware.py`** | **录制中间件 (`RecordingMiddleware`)**：<br>FastAPI 中间件，录制客户端请求/响应，并通过 contextvars 设置录制上下文供拦截器使用。 |
+| **`recorder.py`** | **录制核心逻辑**：<br>包含 contextvars 上下文管理、prefix 生成、JSON 文件写入等核心功能。 |
 
 ## 2. 核心开发规范 (注重性能)
 
@@ -19,9 +24,13 @@
 1. **极致性能导向**：
    - 流式响应（SSE）会产生大量细碎的 Chunk，在解析和转换时必须最小化字符串查找和字典重组的开销。
    - 优先采用轻量级的状态标记或简单的字符串操作，避免在热点代码路径（如每个 Chunk 的处理逻辑）中引入复杂的解析或深度拷贝。
-2. **逻辑一致性**：
+2. **统一的日志记录 (Logger Injection)**：
+   - **禁止**在模块内部使用硬编码获取 logger (如 `logging.getLogger("llm_proxy")` 或 `logging.getLogger(__name__)`)。
+   - 所有类（包括中间件、拦截器等）的 logger 必须通过**外部构造函数（__init__）依赖注入**传入，并且**必须是必传参数（不可设为可选或使用 `logger=None` 并内部兜底）**，确保日志配置的统一控制和可测试性。
+   - 静态方法如果需要日志记录，可以考虑转为实例方法或作为参数传入 logger。
+3. **逻辑一致性**：
    - 修改 `models.py` 的路由逻辑时，需确保前缀剥离和精确映射功能不受损。
    - 修改 `converter.py` 的清洗逻辑时，请同步检查并兼容非流式请求的处理分支（在 `handler.py` 中对完整内容的清洗）。
-3. **测试保障**：
+4. **测试保障**：
    - 任何改动后必须运行 `pytest tests/test_converter.py` 验证基础逻辑。
    - 涉及流式解析和转换的改动，必须运行 `pytest tests/agent/` 验证基于真实录制数据的端到端解析能力。
