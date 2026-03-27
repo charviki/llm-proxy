@@ -16,6 +16,7 @@ Agent Workflow 集成测试
 import asyncio
 import json
 import logging
+import os
 import pytest
 from pathlib import Path
 from typing import Optional
@@ -39,9 +40,9 @@ def mock_logger():
 
 
 @pytest.fixture
-def parser_matcher():
+def parser_matcher(mock_logger):
     # 录制数据是 MiniMax 的（包含 think 标签），使用 think_tag parser
-    return ChunkConverterMatcher({"minimax": "think_tag", "default": "reasoning_content"})
+    return ChunkConverterMatcher({"minimax": "think_tag", "default": "reasoning_content"}, mock_logger)
 
 
 def load_mock_data(mock_name: str = "project_analysis__stream_think") -> dict:
@@ -445,7 +446,7 @@ async def test_project_analysis__reasoning_field(mock_logger, parser_matcher):
     _skip_if_no_reasoning_mock_data()
 
     # 使用 reasoning parser
-    reasoning_matcher = ChunkConverterMatcher({"minimax": "reasoning", "default": "reasoning_content"})
+    reasoning_matcher = ChunkConverterMatcher({"minimax": "reasoning", "default": "reasoning_content"}, mock_logger)
 
     mock_data = load_mock_data("project_analysis__stream_reasoning")
 

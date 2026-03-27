@@ -1,6 +1,9 @@
 import pytest
 import json
+import logging
 from proxy.stream import StreamSimulator
+
+test_logger = logging.getLogger("test_logger")
 
 @pytest.mark.asyncio
 async def test_simulate_chat_completion():
@@ -18,7 +21,7 @@ async def test_simulate_chat_completion():
     }
     model_id = "test-model"
 
-    generator = StreamSimulator.simulate_chat_completion(response_json, model_id)
+    generator = StreamSimulator.simulate_chat_completion(response_json, model_id, test_logger)
     chunks = [chunk async for chunk in generator]
 
     # Verify chunks
@@ -60,7 +63,7 @@ async def test_simulate_completions():
     }
     model_id = "test-model"
 
-    generator = StreamSimulator.simulate_completions(response_json, model_id)
+    generator = StreamSimulator.simulate_completions(response_json, model_id, test_logger)
     chunks = [chunk async for chunk in generator]
 
     decoded_chunks = [c.decode('utf-8') for c in chunks]
@@ -102,7 +105,7 @@ async def test_simulate_chat_completion_with_tool_calls():
     }
     model_id = "test-model"
 
-    generator = StreamSimulator.simulate_chat_completion(response_json, model_id)
+    generator = StreamSimulator.simulate_chat_completion(response_json, model_id, test_logger)
     chunks = [chunk async for chunk in generator]
     decoded_chunks = [c.decode('utf-8') for c in chunks]
 
@@ -158,7 +161,7 @@ async def test_simulate_chat_completion_with_multiple_tool_calls():
         }]
     }
 
-    generator = StreamSimulator.simulate_chat_completion(response_json, "test-model")
+    generator = StreamSimulator.simulate_chat_completion(response_json, "test-model", test_logger)
     chunks = [chunk async for chunk in generator]
     decoded_chunks = [c.decode('utf-8') for c in chunks]
 
@@ -191,7 +194,7 @@ async def test_simulate_chat_completion_with_long_arguments():
         }]
     }
 
-    generator = StreamSimulator.simulate_chat_completion(response_json, "test-model")
+    generator = StreamSimulator.simulate_chat_completion(response_json, "test-model", test_logger)
     chunks = [chunk async for chunk in generator]
     decoded_chunks = [c.decode('utf-8') for c in chunks]
 
@@ -228,7 +231,7 @@ async def test_simulate_chat_completion_content_and_tool_calls():
         }]
     }
 
-    generator = StreamSimulator.simulate_chat_completion(response_json, "test-model")
+    generator = StreamSimulator.simulate_chat_completion(response_json, "test-model", test_logger)
     chunks = [chunk async for chunk in generator]
     decoded_chunks = [c.decode('utf-8') for c in chunks]
 
@@ -247,7 +250,7 @@ async def test_sse_format_double_newlines():
         "choices": [{"message": {"content": "Hi"}}]
     }
 
-    generator = StreamSimulator.simulate_chat_completion(response_json, "test-model")
+    generator = StreamSimulator.simulate_chat_completion(response_json, "test-model", test_logger)
     chunks = [chunk async for chunk in generator]
 
     for chunk in chunks:

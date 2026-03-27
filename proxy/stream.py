@@ -1,6 +1,7 @@
 """流式响应模拟器 - 将非流式响应转换为流式响应"""
 import json
 import time
+import logging
 from typing import AsyncGenerator
 
 
@@ -32,7 +33,8 @@ class StreamSimulator:
     @staticmethod
     async def simulate_chat_completion(
         response_json: dict,
-        model_id: str
+        model_id: str,
+        logger: logging.Logger
     ) -> AsyncGenerator[bytes, None]:
         """模拟 chat completions 流式响应"""
         try:
@@ -104,6 +106,7 @@ class StreamSimulator:
             yield b'data: [DONE]\n\n'
 
         except Exception as e:
+            logger.exception(f"模拟流式响应失败: {e}")
             error_data = json.dumps({
                 "error": {
                     "message": f"Proxy error: failed to simulate stream: {str(e)}",
@@ -116,7 +119,8 @@ class StreamSimulator:
     @staticmethod
     async def simulate_completions(
         response_json: dict,
-        model_id: str
+        model_id: str,
+        logger: logging.Logger
     ) -> AsyncGenerator[bytes, None]:
         """模拟 completions 流式响应"""
         try:
@@ -153,6 +157,7 @@ class StreamSimulator:
             yield b'data: [DONE]\n\n'
 
         except Exception as e:
+            logger.exception(f"模拟 completions 流式响应失败: {e}")
             error_data = json.dumps({
                 "error": {
                     "message": f"Proxy error: failed to simulate stream: {str(e)}",

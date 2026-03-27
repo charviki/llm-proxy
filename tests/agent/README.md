@@ -223,3 +223,29 @@ tests/agent/test_agent_workflow.py::test_project_analysis__full_loop PASSED
 tests/agent/test_agent_workflow.py::test_mock_data_exists PASSED
 tests/agent/test_agent_workflow.py::test_project_analysis__reasoning_field PASSED
 ```
+
+## 运行时录制数据校验
+
+录制数据保存在 `recordings/` 目录，可使用校验脚本验证完整性：
+
+```bash
+# 校验所有录制数据
+python tests/agent/validate_recordings.py
+```
+
+### 校验内容
+
+| 校验项 | 说明 |
+|--------|------|
+| SSE 格式 | chunks 是否正确以 `data: ` 开头 |
+| [DONE] 消息 | 流式响应是否以 `[DONE]` 结尾 |
+| 状态码 | client/backend 响应状态码 |
+| 内容完整性 | content、reasoning_content 是否丢失 |
+| model 映射 | client/backend 请求的 model 字段是否正确 |
+| chunks 数量 | 客户端 chunks 是否少于后端（可能截断） |
+
+### 返回码
+
+- `0`: 所有录制通过
+- `1`: 存在错误
+- `2`: 存在警告（但无错误）

@@ -1,5 +1,5 @@
 """配置模块"""
-from .models import APIConfig, ServerConfig, AppConfig
+from .models import APIConfig, ServerConfig, AppConfig, RecordingConfig
 from .loader import ConfigLoader
 
-__all__ = ["APIConfig", "ServerConfig", "AppConfig", "ConfigLoader"]
+__all__ = ["APIConfig", "ServerConfig", "AppConfig", "RecordingConfig", "ConfigLoader"]

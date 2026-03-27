@@ -42,6 +42,15 @@ class ServerConfig(BaseModel):
     key_file: Optional[str] = Field(None, description="SSL 私钥路径")
 
 
+class RecordingConfig(BaseModel):
+    """流量录制配置"""
+    enabled: bool = Field(False, description="是否启用流量录制")
+    record_paths: list[str] = Field(
+        default_factory=lambda: ["/v1/chat/completions"],
+        description="需要录制的请求路径列表"
+    )
+
+
 class AppConfig(BaseModel):
     """应用完整配置"""
     domains: list[str] = Field(
@@ -54,3 +63,4 @@ class AppConfig(BaseModel):
     )
     backends: BackendsConfig = Field(default_factory=BackendsConfig, description="后端配置")
     server: ServerConfig = Field(..., description="服务器配置")
+    recording: RecordingConfig = Field(default_factory=lambda: RecordingConfig(enabled=False), description="流量录制配置")

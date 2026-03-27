@@ -31,9 +31,12 @@ class ModelsManager:
 
     async def load_models(self, client: httpx.AsyncClient) -> None:
         """加载所有后端的模型列表"""
-        for group in self.backends.groups:
-            if group.models_endpoint and group.models_file:
-                await self._load_group_models(client, group)
+        try:
+            for group in self.backends.groups:
+                if group.models_endpoint and group.models_file:
+                    await self._load_group_models(client, group)
+        except Exception as e:
+            self.logger.exception(f"加载模型列表时发生未知错误: {e}")
 
     async def _load_group_models(self, client: httpx.AsyncClient, group: GroupConfig) -> None:
         """加载后端的模型列表"""
@@ -73,9 +76,12 @@ class ModelsManager:
             else:
                 self._load_from_file(group)
                 self.logger.warning(f"获取 {group.name} 模型列表失败 (HTTP {response.status_code})，使用缓存")
+        except httpx.RequestError as e:
+            self._load_from_file(group)
+            self.logger.warning(f"获取 {group.name} 模型列表网络异常: {e}，使用缓存")
         except Exception as e:
             self._load_from_file(group)
-            self.logger.warning(f"获取 {group.name} 模型列表异常: {e}，使用缓存")
+            self.logger.exception(f"获取 {group.name} 模型列表发生未知异常: {e}，使用缓存")
 
     def _load_from_file(self, group: GroupConfig) -> None:
         """从文件加载模型列表"""
@@ -91,7 +97,7 @@ class ModelsManager:
                     self.group_models[group.name] = model_ids
                     self.logger.info(f"已从文件加载 {group.name} 模型列表，共 {len(model_ids)} 个模型")
             except Exception as e:
-                self.logger.warning(f"读取 {group.name} 模型文件失败: {e}")
+                self.logger.warning(f"读取模型缓存文件失败 ({group.models_file}): {e}") # 文件不存在或 json 损坏，作为 warning 处理即可
                 self.group_models[group.name] = []
         else:
             self.group_models[group.name] = []

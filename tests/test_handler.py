@@ -12,8 +12,8 @@ def mock_logger():
     return logging.getLogger("test_logger")
 
 @pytest.fixture
-def mock_parser_matcher():
-    matcher = ChunkConverterMatcher({"default": "reasoning_content"})
+def mock_parser_matcher(mock_logger):
+    matcher = ChunkConverterMatcher({"default": "reasoning_content"}, mock_logger)
     return matcher
 
 @pytest.fixture

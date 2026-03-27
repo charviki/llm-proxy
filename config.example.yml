@@ -48,3 +48,11 @@ server:
   debug: true # 是否开启 debug 模式
   cert_file: "ca/llm-proxy.crt" # 证书文件路径
   key_file: "ca/llm-proxy.key" # 私钥文件路径
+
+# 流量录制配置（默认关闭）
+# 启用后会实时录制客户端和后端的请求/响应到 recordings/ 目录
+# recording:
+#   enabled: true
+#   # 需要录制的请求路径列表，默认只录制 /v1/chat/completions
+#   record_paths:
+#     - "/v1/chat/completions"
