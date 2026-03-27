@@ -11,9 +11,14 @@ from .converter import (
     ReasoningContent
 )
 from .middleware import RecordingMiddleware
-from .transport import ProxyTransport
+from .transport import ProxyTransport, ReplayMiddleware
+from .context import (
+    get_replay_id,
+    set_replay_id,
+    clear_replay_id,
+)
 from .interceptors import Interceptor
-from .recording_interceptor import RecordingInterceptor
+from .recording_interceptor import TransportRecordingMiddleware
 from .recorder import RecordingContext
 
 __all__ = [
@@ -28,7 +33,11 @@ __all__ = [
     "ReasoningContent",
     "RecordingMiddleware",
     "ProxyTransport",
+    "ReplayMiddleware",
     "Interceptor",
-    "RecordingInterceptor",
+    "TransportRecordingMiddleware",
     "RecordingContext",
+    "get_replay_id",
+    "set_replay_id",
+    "clear_replay_id",
 ]

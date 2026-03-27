@@ -11,9 +11,9 @@
 | **`handler.py`** | **核心代理处理器 (`ProxyHandler`)**：<br>接管请求、修改模型 ID、注入鉴权头，通过 `httpx` 向后端发起带有重试机制的请求。根据后端能力决定走原生流式转发还是非流式降级。 |
 | **`converter.py`** | **响应清洗引擎**：<br>匹配对应的解析器，处理后端返回的不同格式。例如统一提取 `<think>` 标签或 `reasoning` 字段的内容，转换为标准的推理内容输出。 |
 | **`stream.py`** | **流式模拟器 (`StreamSimulator`)**：<br>当后端仅支持非流式，但客户端要求流式时，将完整的 JSON 响应按步长切片，伪造标准的 SSE 流式输出。 |
-| **`transport.py`** | **代理传输层 (`ProxyTransport`)**：<br>包装 httpx 传输层，通过可插拔的拦截器架构扩展功能。持有 `Interceptor` 列表，在请求前、响应后、错误时调用。 |
-| **`interceptors.py`** | **拦截器接口 (`Interceptor`)**：<br>定义拦截器协议，包含 `on_request`、`on_response`、`on_error` 三个方法。实现此接口即可扩展自定义拦截器。 |
-| **`recording_interceptor.py`** | **录制拦截器 (`RecordingInterceptor`)**：<br>实现 `Interceptor` 接口，录制后端请求/响应到 `recordings/` 目录的 JSON 文件。 |
+| **`transport.py`** | **代理传输层 (`ProxyTransport`)**：<br>包装 httpx 传输层，通过可插拔的 `Middleware` 链架构扩展功能。支持在请求发送前后进行短路或修改。 |
+| **`interceptors.py`** | **[已废弃] 拦截器接口 (`Interceptor`)**：<br>旧版拦截器协议，现已被 `transport.Middleware` 链取代，为兼容性保留。 |
+| **`recording_interceptor.py`** | **录制/重放中间件 (`TransportRecordingMiddleware` / `ReplayMiddleware`)**：<br>继承 `Middleware` 基类，处理后端流量的录制以及基于 header 的录制重放短路。 |
 | **`middleware.py`** | **录制中间件 (`RecordingMiddleware`)**：<br>FastAPI 中间件，录制客户端请求/响应，并通过 contextvars 设置录制上下文供拦截器使用。 |
 | **`recorder.py`** | **录制核心逻辑**：<br>包含 contextvars 上下文管理、prefix 生成、JSON 文件写入等核心功能。 |
 
