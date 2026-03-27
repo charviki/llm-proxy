@@ -7,8 +7,12 @@ import typing
 from .recorder import (
     write_request,
     write_response,
+    get_recording_context as get_recording_ctx,
+    clear_recording_context as clear_recording_ctx,
 )
-from .transport import get_recording_ctx, clear_recording_ctx
+from .context import get_replay_id
+from .transport import Middleware
+import time
 
 
 class TeeAsyncByteStream(httpx.AsyncByteStream):
@@ -53,11 +57,11 @@ class TeeAsyncByteStream(httpx.AsyncByteStream):
                 self.logger.error(f"[TeeStream] on_close callback error: {e}")
 
 
-class RecordingInterceptor:
-    """录制拦截器 - 录制后端的请求/响应"""
+class TransportRecordingMiddleware(Middleware):
+    """录制中间件 - 录制后端的请求/响应"""
 
     def __init__(self, logger: logging.Logger):
-        self.logger = logger
+        super().__init__(logger)
 
     @staticmethod
     def _get_content_type(response: httpx.Response) -> str:
@@ -66,21 +70,24 @@ class RecordingInterceptor:
             return content_type.decode("utf-8", errors="replace")
         return content_type.lower()
 
-    async def on_request(self, request: httpx.Request, ctx: dict) -> None:
-        """录制后端请求"""
+    async def __call__(self, request: httpx.Request, next_handler: typing.Callable[[], typing.Awaitable[httpx.Response]]) -> httpx.Response:
+        """中间件处理逻辑"""
+        if get_replay_id():
+            return await next_handler()
+
         recording_ctx = get_recording_ctx()
         if not recording_ctx:
-            self.logger.debug("[Recording] on_request: no recording context")
-            return
+            self.logger.debug("[Recording] __call__: no recording context")
+            return await next_handler()
 
         prefix = recording_ctx.get("prefix")
         suffix = recording_ctx.get("suffix")
 
         if not prefix or not suffix:
-            self.logger.debug(f"[Recording] on_request: missing prefix or suffix, prefix={prefix}, suffix={suffix}")
-            return
+            self.logger.debug(f"[Recording] __call__: missing prefix or suffix, prefix={prefix}, suffix={suffix}")
+            return await next_handler()
 
-        self.logger.info(f"[Recording] on_request: {request.method} {request.url}")
+        self.logger.info(f"[Recording] __call__: {request.method} {request.url}")
 
         request_type = recording_ctx.get("request_type", "request").replace("client", "backend")
 
@@ -105,20 +112,27 @@ class RecordingInterceptor:
             body=body
         )
 
-    async def on_response(self, response: httpx.Response, ctx: dict, timing_ms: float) -> None:
-        """录制后端响应"""
-        recording_ctx = get_recording_ctx()
-        if not recording_ctx:
-            return
+        start_time = time.perf_counter()
 
-        prefix = recording_ctx.get("prefix")
-        suffix = recording_ctx.get("suffix")
-
-        if not prefix or not suffix:
-            return
+        try:
+            response = await next_handler()
+            timing_ms = (time.perf_counter() - start_time) * 1000
+        except Exception as error:
+            timing_ms = (time.perf_counter() - start_time) * 1000
+            self.logger.error(f"[Recording] on_error: {error}")
+            response_type = recording_ctx.get("response_type", "response").replace("client", "backend")
+            write_response(
+                prefix=prefix,
+                suffix=suffix,
+                response_type=response_type,
+                status_code=0,
+                timing_ms=timing_ms,
+                error=str(error)
+            )
+            clear_recording_ctx()
+            raise
 
         response_type = recording_ctx.get("response_type", "response").replace("client", "backend")
-
         status_code = response.status_code
 
         chunks = None
@@ -160,7 +174,7 @@ class RecordingInterceptor:
             # 替换原始的 stream 为旁路拦截器
             self.logger.info(f"[Recording] Wrapping stream with TeeAsyncByteStream, content-type: {content_type}")
             response.stream = TeeAsyncByteStream(response.stream, on_stream_close, logger=self.logger)
-            return
+            return response
 
         try:
             response_body = await response.aread()
@@ -195,30 +209,4 @@ class RecordingInterceptor:
         # 清除录制上下文
         clear_recording_ctx()
 
-    async def on_error(self, error: Exception, ctx: dict, timing_ms: float) -> None:
-        """录制后端错误"""
-        self.logger.error(f"[Recording] on_error: {error}")
-        recording_ctx = get_recording_ctx()
-        if not recording_ctx:
-            self.logger.debug("[Recording] on_error: no recording context")
-            return
-
-        prefix = recording_ctx.get("prefix")
-        suffix = recording_ctx.get("suffix")
-
-        if not prefix or not suffix:
-            self.logger.debug(f"[Recording] on_error: missing prefix or suffix")
-            return
-
-        response_type = recording_ctx.get("response_type", "response").replace("client", "backend")
-
-        write_response(
-            prefix=prefix,
-            suffix=suffix,
-            response_type=response_type,
-            status_code=0,
-            timing_ms=timing_ms,
-            error=str(error)
-        )
-        # 清除录制上下文
-        clear_recording_ctx()
+        return response

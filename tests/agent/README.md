@@ -249,3 +249,27 @@ python tests/agent/validate_recordings.py
 - `0`: 所有录制通过
 - `1`: 存在错误
 - `2`: 存在警告（但无错误）
+
+## 基于录制的本地重放测试
+
+llm-proxy 支持利用已录制的数据进行**无感知的运行时重放**，特别适用于在不真实消耗 Token 的情况下快速重现复杂流量或调试代码：
+
+### 1. 发送重放请求
+在请求头中携带 `X-Replay-Id`，值为录制文件名的后缀：
+```bash
+curl -X POST http://localhost:8080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer 123" \
+  -H "X-Replay-Id: 1774581594_a6519d" \
+  -d '{"model": "your-model", "messages": [...]}'
+```
+此时 proxy 会直接短路真实后端请求，将 `recordings/..._a6519d__backend_response.json` 的内容作为 Mock 数据返回，且**该响应依然会经过所有的 Converter 处理流程**。
+
+### 2. 重放端到端自动化验证
+提供了一个专属脚本验证“重放短路机制”是否完美工作：
+```bash
+python tests/agent/verify_recording.py --proxy-url http://localhost:8080 --recording-suffix 1774581594_a6519d
+```
+脚本会自动提取原本的客户端请求发送给代理，并携带 `x-replay-id` 头。最后验证：
+1. 客户端是否收到了预期的重放数据。
+2. 短路机制是否生效（在重放期间绝不产生任何新的录制文件）。

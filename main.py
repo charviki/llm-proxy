@@ -7,7 +7,7 @@ import uvicorn
 from fastapi import FastAPI
 
 from config import ConfigLoader
-from proxy import ProxyHandler, ChunkConverterMatcher, RecordingMiddleware, ProxyTransport, RecordingInterceptor
+from proxy import ProxyHandler, ChunkConverterMatcher, RecordingMiddleware, ProxyTransport, TransportRecordingMiddleware, ReplayMiddleware
 from routes import register_routes
 
 logger = logging.getLogger('llm_proxy')
@@ -26,12 +26,17 @@ async def lifespan(app: FastAPI):
     # 分段超时：连接快速失败，读取留足够时间给 Agent 长推理任务
     timeout = httpx.Timeout(connect=10.0, read=600.0, write=30.0, pool=30.0)
 
-    # 构建拦截器列表
-    interceptors = []
+    # 构建中间件列表
+    middlewares = []
     if config.recording.enabled:
-        interceptors.append(RecordingInterceptor(logger=logger))
+        from pathlib import Path
+        middlewares.append(ReplayMiddleware(
+            recordings_dir=Path("recordings"),
+            logger=logger
+        ))
+        middlewares.append(TransportRecordingMiddleware(logger=logger))
 
-    transport = ProxyTransport(logger=logger, interceptors=interceptors)
+    transport = ProxyTransport(logger=logger, middlewares=middlewares)
     client = httpx.AsyncClient(timeout=timeout, limits=limits, transport=transport)
 
     await proxy_handler.set_client(client)
