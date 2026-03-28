@@ -51,6 +51,13 @@ class RecordingConfig(BaseModel):
     )
 
 
+class SSECoalescingConfig(BaseModel):
+    """SSE 语义合包配置"""
+    enabled: bool = Field(False, description="是否启用 SSE 语义合包")
+    window_ms: int = Field(20, ge=1, description="语义合包时间窗口（毫秒）")
+    max_buffer_length: int = Field(256, ge=1, description="语义合包长度阈值（字符数）")
+
+
 class AppConfig(BaseModel):
     """应用完整配置"""
     domains: list[str] = Field(
@@ -64,3 +71,4 @@ class AppConfig(BaseModel):
     backends: BackendsConfig = Field(default_factory=BackendsConfig, description="后端配置")
     server: ServerConfig = Field(..., description="服务器配置")
     recording: RecordingConfig = Field(default_factory=lambda: RecordingConfig(enabled=False), description="流量录制配置")
+    sse_coalescing: SSECoalescingConfig = Field(default_factory=SSECoalescingConfig, description="SSE 语义合包配置")

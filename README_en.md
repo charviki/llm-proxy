@@ -34,6 +34,8 @@ Many modern AI applications (like certain desktop clients, IDE plugins, etc.) ha
   - **Exact Mapping (API Routing)**: Allows seamless translation of a specific model name requested by the client (e.g., `my-custom-model-v1`) into the actual model name required by the backend (e.g., `claude-3-5-sonnet`), and routes it to a designated private endpoint. Perfect for "disguising" or "renaming" models for the client.
 - **Intelligent Reasoning Parsing**: Built-in parsers to adapt to the reasoning/thinking process output formats of different models (extracting specific `<think>` tags or separate `reasoning` fields), uniformly converting them into the standard OpenAI protocol format (e.g., `reasoning_content`) before returning to the client, ensuring correct rendering of the thought process on the client UI.
 - **Stream Simulation**: For backend services that do not support streaming output, the proxy can automatically downgrade to sending non-streaming requests. It then takes the complete response and simulates a standard SSE streaming output via the `StreamSimulator`, perfectly maintaining compatibility with client applications that strictly require streaming input.
+- **Unified Internal Event Stream Architecture**: Native SSE and non-streaming JSON are first normalized into a shared internal event stream, then consumed by either the streaming processor or the JSON assembler. This lets streaming cleanup, semantic coalescing, and JSON aggregation share the same core pipeline instead of maintaining two main branches.
+- **SSE Semantic Coalescing**: Consecutive `content` deltas and `arguments` deltas for the same `tool_call` can be merged based on a time window and buffer length threshold, reducing overly fragmented SSE events. The feature is disabled by default and can be tuned incrementally per environment.
 - **Runtime Traffic Recording & Replay**: Using FastAPI Middleware and a pluggable Transport Middleware chain, the proxy can record client request/response and backend request/response in real-time to JSON files in the `recordings/` directory. By sending an `X-Replay-Id` header, the proxy can seamlessly short-circuit backend requests and replay recorded mock responses, perfectly supporting isolated debugging and regression testing without consuming real tokens.
 
 ## ⚙️ How It Works
@@ -42,6 +44,7 @@ Many modern AI applications (like certain desktop clients, IDE plugins, etc.) ha
 2. **DNS Spoofing**: Modify the system's `hosts` file to point target domains (like `api.openai.com`) to the proxy server (e.g., `127.0.0.1`).
 3. **Seamless Forwarding**: Requests sent by client applications are intercepted, re-routed, and modified before being sent to the actual custom LLM service.
 4. **Model Discovery Takeover**: Many clients request `/v1/models` on startup to get available models. `llm-proxy` completely takes over this request. During service startup, it actively calls remote backend interfaces or reads local cache files (e.g., in the `models/` directory) to load and merge all supported models, and then returns this combined list directly to the client without forwarding the request.
+5. **Unified Response Handling**: For core endpoints such as `chat/completions`, the proxy first converts either native streaming responses or non-streaming JSON into a shared internal event stream through `BackendClient`, and then routes that stream to the SSE processor or the JSON assembler.
 
 ---
 
@@ -75,7 +78,8 @@ You can run this project from **source code** or using **Docker Compose**. Regar
    ```
 2. Copy `config.example.yml` to `config.yml` in the project root.
 3. Modify the routing and model mapping rules in `config.yml` according to your actual backend services.
-4. **(For Docker Deployment)**: Copy `docker-compose.example.yml` to `docker-compose.yml`. If you have configured `api_key_env` in your `config.yml`, you must inject the corresponding real API Keys in the `environment` section of `docker-compose.yml` (or pass them via a `.env` file).
+4. If you want to reduce overly fragmented SSE events, optionally configure `sse_coalescing.enabled / window_ms / max_buffer_length` in `config.yml`. It is disabled by default to preserve existing behavior.
+5. **(For Docker Deployment)**: Copy `docker-compose.example.yml` to `docker-compose.yml`. If you have configured `api_key_env` in your `config.yml`, you must inject the corresponding real API Keys in the `environment` section of `docker-compose.yml` (or pass them via a `.env` file).
 
 ### Method 1: Running from Source (Local Development)
 

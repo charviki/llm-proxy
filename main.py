@@ -82,7 +82,8 @@ def main() -> None:
     proxy_handler = ProxyHandler(
         backends=config.backends,
         logger=logger,
-        parser_matcher=parser_matcher
+        parser_matcher=parser_matcher,
+        sse_coalescing_config=config.sse_coalescing,
     )
 
     app = FastAPI(title="LLM-Proxy", lifespan=lifespan)

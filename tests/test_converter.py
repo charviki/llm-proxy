@@ -4,7 +4,7 @@ from proxy.converter import (
     ReasoningContent,
     BaseChunkConverter,
     ThinkTagChunkConverter,
-    GeminiChunkConverter,
+    ReasoningChunkConverter,
     ReasoningContentChunkConverter,
     ChunkConverterMatcher,
     create_parser,
@@ -50,8 +50,8 @@ def test_think_tag_converter():
     assert res2.reasoning == "B"
     assert conv2.think_state == ThinkState.FINISHED
 
-def test_gemini_reasoning_converter():
-    converter = GeminiChunkConverter("test-model", test_logger)
+def test_reasoning_field_converter():
+    converter = ReasoningChunkConverter("test-model", test_logger)
     delta = {"reasoning": "thought", "reasoning_details": {}, "content": "text"}
 
     res = converter.process_chunk(delta)
@@ -71,7 +71,7 @@ def test_reasoning_content_converter():
 
 def test_create_parser():
     assert isinstance(create_parser("think_tag", "m", test_logger), ThinkTagChunkConverter)
-    assert isinstance(create_parser("reasoning", "m", test_logger), GeminiChunkConverter)
+    assert isinstance(create_parser("reasoning", "m", test_logger), ReasoningChunkConverter)
     assert isinstance(create_parser("reasoning_content", "m", test_logger), ReasoningContentChunkConverter)
     assert isinstance(create_parser("unknown_type", "m", test_logger), ReasoningContentChunkConverter)
 
@@ -86,7 +86,7 @@ def test_chunk_converter_matcher():
 
     # Match keywords
     assert isinstance(matcher.get_parser("anthropic/claude-3"), ThinkTagChunkConverter)
-    assert isinstance(matcher.get_parser("google/gemini-1.5-pro"), GeminiChunkConverter)
+    assert isinstance(matcher.get_parser("google/gemini-1.5-pro"), ReasoningChunkConverter)
     assert isinstance(matcher.get_parser("deepseek-reasoner"), ReasoningContentChunkConverter)
 
     # Unmatched should return BaseChunkConverter (standard model)
@@ -134,7 +134,7 @@ def test_base_converter_parse_preserves_tool_calls():
 
 def test_reasoning_converter_preserves_tool_calls_delta():
     """AbstractReasoningConverter.parse() 不应丢弃包含 tool_calls 的 delta"""
-    converter = GeminiChunkConverter("custom/gemini-model", test_logger)
+    converter = ReasoningChunkConverter("custom/gemini-model", test_logger)
     # 模拟只有 tool_calls 的 delta（无 content、无 reasoning）
     data_str = json.dumps({
         "id": "chatcmpl-123",
@@ -159,7 +159,7 @@ def test_reasoning_converter_preserves_tool_calls_delta():
 
 def test_reasoning_converter_preserves_tool_calls_with_reasoning():
     """当 delta 同时包含 reasoning 和 tool_calls 时，清理 reasoning 后应保留 tool_calls"""
-    converter = GeminiChunkConverter("custom/model", test_logger)
+    converter = ReasoningChunkConverter("custom/model", test_logger)
     data_str = json.dumps({
         "id": "chatcmpl-456",
         "model": "backend-model",
@@ -218,3 +218,54 @@ def test_reasoning_converter_finished_state_model_remapping():
     result = converter.parse(data_str)
     parsed = json.loads(result)
     assert parsed["model"] == "my-custom/claude"
+
+def test_think_tag_parse_moves_thinking_text_to_reasoning_only():
+    """think 阶段的文本应只出现在 reasoning_content，不应继续保留在 content 中"""
+    converter = ThinkTagChunkConverter("minimax/minimax-m2.7", test_logger)
+    data_str = json.dumps({
+        "id": "chatcmpl-think-1",
+        "model": "MiniMax-M2.7",
+        "choices": [{
+            "delta": {
+                "content": "<think>用户询问",
+                "role": "assistant",
+            },
+            "finish_reason": None
+        }]
+    })
+
+    result = converter.parse(data_str)
+    parsed = json.loads(result)
+    delta = parsed["choices"][0]["delta"]
+
+    assert parsed["model"] == "minimax/minimax-m2.7"
+    assert delta["role"] == "assistant"
+    assert delta["reasoning_content"] == "用户询问"
+    assert "content" not in delta
+
+def test_think_tag_parse_splits_closing_chunk_reasoning_and_content():
+    """包含 </think> 的 chunk 应正确分离 reasoning_content 和正文 content"""
+    converter = ThinkTagChunkConverter("minimax/minimax-m2.7", test_logger)
+    converter.parse(json.dumps({
+        "id": "chatcmpl-think-2",
+        "model": "MiniMax-M2.7",
+        "choices": [{
+            "delta": {"content": "<think>前置思考"},
+            "finish_reason": None
+        }]
+    }))
+
+    result = converter.parse(json.dumps({
+        "id": "chatcmpl-think-3",
+        "model": "MiniMax-M2.7",
+        "choices": [{
+            "delta": {"content": "收尾</think>正式回答"},
+            "finish_reason": None
+        }]
+    }))
+
+    parsed = json.loads(result)
+    delta = parsed["choices"][0]["delta"]
+
+    assert delta["reasoning_content"] == "收尾"
+    assert delta["content"] == "正式回答"

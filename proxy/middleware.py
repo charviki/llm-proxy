@@ -2,7 +2,6 @@
 import json
 import time
 import logging
-import uuid
 from typing import Callable
 from fastapi import Request
 
@@ -70,12 +69,7 @@ class RecordingMiddleware:
                     return {"type": "http.request", "body": body_bytes, "more_body": False}
                 return await original_receive()
 
-            # 组装前缀：将 / 替换为 _，去除开头的下划线
-            prefix = request.url.path.replace("/", "_").strip("_")
-            if not prefix:
-                prefix = "root"
-                
-            suffix = f"{int(time.time())}_{uuid.uuid4().hex[:6]}"
+            prefix, suffix = generate_prefix(request.url.path)
             
             write_request(
                 prefix=prefix,

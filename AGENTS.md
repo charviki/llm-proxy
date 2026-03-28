@@ -28,22 +28,24 @@ graph TD
     subgraph ProxyCore["llm-proxy 代理网关 (核心路由与处理)"]
         Router["routes.py<br>/v1/chat/completions等"] --> Handler["ProxyHandler<br>(proxy/handler.py)"]
         Handler -->|匹配路由| ModelsManager["ModelsManager<br>精确匹配/前缀匹配"]
-        Handler -->|请求转发| BackendAPI["后端 API 请求分发"]
+        Handler -->|请求转发| BackendClient["BackendClient<br>统一上游客户端适配层"]
+        BackendClient -->|复用| BackendAPI["httpx.AsyncClient + ProxyTransport"]
     end
 
     BackendAPI -->|HTTPS POST| Provider["真实 LLM 服务商<br>OpenRouter/DeepSeek等"]
     Provider -->|流式 SSE 或 非流式 JSON| BackendAPI
 
     subgraph Response["响应清洗与转换"]
-        BackendAPI -->|"根据模型名获取"| ConverterMatcher["ChunkConverterMatcher"]
+        BackendClient --> EventStream["统一内部事件流"]
+        EventStream --> ConverterMatcher["ChunkConverterMatcher"]
         ConverterMatcher --> Converter["具体的 Converter<br>处理 think 标签或 reasoning 字段"]
-
-        Converter -.->|"流式响应"| StreamRes["直接提取后 StreamingResponse"]
-        BackendAPI -.->|"非流式转流式"| StreamSim["StreamSimulator 切片模拟 SSE"]
+        Converter --> StreamProcessor["StreamEventProcessor<br>流式清洗 / 合包 / SSE 编码"]
+        EventStream --> Assembler["ResponseAssembler<br>聚合为非流式 JSON"]
+        BackendClient -.->|"非流式内部拆解"| StreamSim["StreamSimulator<br>内部模拟增量 payload"]
     end
 
-    StreamRes --> Client
-    StreamSim --> Client
+    StreamProcessor --> Client
+    Assembler --> Client
 ```
 
 ## 3. 全局开发规范

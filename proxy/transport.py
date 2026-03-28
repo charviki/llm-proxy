@@ -8,6 +8,7 @@ import logging
 import httpx
 
 from .context import get_replay_id
+from .recorder import generate_prefix
 
 
 class Middleware(ABC):
@@ -44,7 +45,7 @@ class ReplayMiddleware(Middleware):
         if not replay_id:
             return await next_handler()
 
-        prefix = self._path_to_prefix(request.url.path)
+        prefix, _ = generate_prefix(request.url.path)
         replay_file = self.recordings_dir / f"{prefix}__{replay_id}__backend_response.json"
 
         if not replay_file.exists():
@@ -56,13 +57,8 @@ class ReplayMiddleware(Middleware):
 
     @staticmethod
     def _path_to_prefix(path: str) -> str:
-        """将请求路径转换为录制文件名用的 prefix
-
-        例如:
-            /v1/chat/completions → v1_chat_completions
-            /v1/completions → v1_completions
-        """
-        return path.lstrip("/").replace("/", "_")
+        prefix, _ = generate_prefix(path)
+        return prefix
 
     async def _create_mock_response(self, replay_file: Path) -> httpx.Response:
         """从录制文件创建 Mock 响应"""

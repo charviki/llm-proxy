@@ -34,6 +34,8 @@
   - **精确映射 (API Routing)**：允许将客户端请求的特定模型名称（例如 `my-custom-model-v1`）在代理层无缝转换为后端真实需要的模型名称（例如 `claude-3-5-sonnet`），并转发到指定的私有部署地址。适合为客户端“伪装”或“重命名”模型。
 - **智能推理过程 (Reasoning) 解析**：内置强大的解析器，可适配不同模型的思考过程输出格式（提取特定的 `<think>` 标签或独立的 `reasoning` 字段等），并统一将其转化为标准 OpenAI 协议格式（如 `reasoning_content`）返回给客户端，确保客户端 UI 能够正确渲染思考过程。
 - **流式模拟 (Stream Simulation)**：对于不支持流式输出的后端服务，代理可自动降级发送非流式请求，拿到完整响应后，通过 `StreamSimulator` 模拟成标准的 SSE 流式输出，完美兼容强制要求流式输入的客户端。
+- **统一内部事件流架构**：原生 SSE 与非流式 JSON 会先统一转换为内部事件流，再分别进入流式处理器或非流式聚合器。这让流式清洗、语义合包与 JSON 聚合共享同一套核心处理链，显著降低双分支维护成本。
+- **面向 SSE 的语义合包 (Semantic Coalescing)**：可按时间窗口与长度阈值合并连续 `content` 增量和同一 `tool_call` 的 `arguments` 增量，减少过碎 SSE 事件数量；默认关闭，可按环境逐步调优。
 - **运行时流量录制与重放 (Traffic Recording & Replay)**：通过 FastAPI Middleware 和可插拔的 Transport 中间件链，实时录制客户端请求/响应以及后端请求/响应到 JSON 文件。支持通过发送携带 `X-Replay-Id` 的请求，在运行时无缝短路后端请求并重放录制的 Mock 响应，完美支持不消耗 Token 的隔离调试与回归测试。
 
 ## ⚙️ 原理与工作流
@@ -42,6 +44,7 @@
 2. **DNS 欺骗**：修改系统的 `hosts` 文件，将目标域名（如 `api.openai.com`）指向代理服务器（如 `127.0.0.1`）。
 3. **无缝转发**：客户端应用发送的请求会被代理截获，重新路由并修改参数后，发送给真实的自定义 LLM 服务。
 4. **模型列表接管 (Model Discovery)**：许多客户端启动时会请求 `/v1/models` 获取可用模型。`llm-proxy` 会直接接管此请求，在服务启动时主动调用远端接口或读取本地缓存文件（如 `models/` 目录下）加载并合并所有支持的模型，最后将组合好的模型列表返回给客户端。
+5. **统一响应处理**：对于 `chat/completions` 等核心接口，代理会先通过 `BackendClient` 把上游原生流式或非流式结果统一转换为内部事件流，再交给流式处理器输出 SSE，或交给响应聚合器输出 JSON。
 
 ---
 
@@ -76,7 +79,8 @@
    ```
 2. 将项目根目录下的 `config.example.yml` 复制为 `config.yml`。
 3. 根据你的实际后端服务，修改 `config.yml` 中的路由和模型映射规则。
-4. **(如果是 Docker 部署)**：将项目根目录下的 `docker-compose.example.yml` 复制为 `docker-compose.yml`。如果你在 `config.yml` 中配置了 `api_key_env`，需要在 `docker-compose.yml` 的 `environment` 节点中注入对应的真实 API Key（或者通过 `.env` 文件传递）。
+4. 如果你希望减少过碎的 SSE 事件，可按需在 `config.yml` 中配置 `sse_coalescing.enabled / window_ms / max_buffer_length`；默认不启用，保持现有输出行为。
+5. **(如果是 Docker 部署)**：将项目根目录下的 `docker-compose.example.yml` 复制为 `docker-compose.yml`。如果你在 `config.yml` 中配置了 `api_key_env`，需要在 `docker-compose.yml` 的 `environment` 节点中注入对应的真实 API Key（或者通过 `.env` 文件传递）。
 
 ### 方式一：源码启动 (本地开发)
 

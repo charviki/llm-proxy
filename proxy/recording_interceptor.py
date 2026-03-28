@@ -7,8 +7,8 @@ import typing
 from .recorder import (
     write_request,
     write_response,
-    get_recording_context as get_recording_ctx,
-    clear_recording_context as clear_recording_ctx,
+    get_recording_context,
+    clear_recording_context,
 )
 from .context import get_replay_id
 from .transport import Middleware
@@ -75,7 +75,7 @@ class TransportRecordingMiddleware(Middleware):
         if get_replay_id():
             return await next_handler()
 
-        recording_ctx = get_recording_ctx()
+        recording_ctx = get_recording_context()
         if not recording_ctx:
             self.logger.debug("[Recording] __call__: no recording context")
             return await next_handler()
@@ -129,7 +129,7 @@ class TransportRecordingMiddleware(Middleware):
                 timing_ms=timing_ms,
                 error=str(error)
             )
-            clear_recording_ctx()
+            clear_recording_context()
             raise
 
         response_type = recording_ctx.get("response_type", "response").replace("client", "backend")
@@ -166,10 +166,10 @@ class TransportRecordingMiddleware(Middleware):
                         error=None
                     )
                     # 流结束后清除 context
-                    clear_recording_ctx()
+                    clear_recording_context()
                 except Exception as e:
                     self.logger.warning(f"录制流式响应失败: {e}")
-                    clear_recording_ctx()
+                    clear_recording_context()
 
             # 替换原始的 stream 为旁路拦截器
             self.logger.info(f"[Recording] Wrapping stream with TeeAsyncByteStream, content-type: {content_type}")
@@ -207,6 +207,6 @@ class TransportRecordingMiddleware(Middleware):
             error=None
         )
         # 清除录制上下文
-        clear_recording_ctx()
+        clear_recording_context()
 
         return response

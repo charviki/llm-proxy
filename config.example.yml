@@ -49,6 +49,13 @@ server:
   cert_file: "ca/llm-proxy.crt" # 证书文件路径
   key_file: "ca/llm-proxy.key" # 私钥文件路径
 
+# SSE 语义合包配置（默认关闭）
+# 开启后会在流式输出阶段按时间窗口和长度阈值合并连续增量
+sse_coalescing:
+  enabled: false # 默认关闭；需要启用时改为 true
+  window_ms: 20 # 时间窗口（毫秒）
+  max_buffer_length: 256 # 单次 flush 前允许累计的最大字符数
+
 # 流量录制配置（默认关闭）
 # 启用后会实时录制客户端和后端的请求/响应到 recordings/ 目录
 # recording:

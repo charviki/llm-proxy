@@ -1,6 +1,7 @@
 import pytest
 import json
 import logging
+from config.models import SSECoalescingConfig
 from proxy.stream import StreamSimulator
 
 test_logger = logging.getLogger("test_logger")
@@ -256,3 +257,94 @@ async def test_sse_format_double_newlines():
     for chunk in chunks:
         decoded = chunk.decode('utf-8')
         assert decoded.endswith("\n\n"), f"SSE event should end with \\n\\n: {repr(decoded)}"
+
+
+@pytest.mark.asyncio
+async def test_simulate_chat_completion_uses_configurable_coalesced_content_chunks():
+    response_json = {
+        "id": "chatcmpl-coalesced-content",
+        "created": 1700000000,
+        "choices": [{
+            "message": {
+                "content": "abcdefghijklmnopqrst"
+            }
+        }]
+    }
+
+    generator = StreamSimulator.simulate_chat_completion(
+        response_json,
+        "test-model",
+        test_logger,
+        SSECoalescingConfig(enabled=True, window_ms=50, max_buffer_length=8),
+    )
+    chunks = [chunk async for chunk in generator]
+    decoded_chunks = [chunk.decode("utf-8") for chunk in chunks]
+
+    payloads = [
+        json.loads(chunk.replace("data: ", "").strip())
+        for chunk in decoded_chunks
+        if chunk.startswith("data: {")
+    ]
+    content_chunks = [
+        payload["choices"][0]["delta"]["content"]
+        for payload in payloads
+        if "content" in payload["choices"][0]["delta"]
+    ]
+
+    assert '"role":"assistant"' in decoded_chunks[0]
+    assert content_chunks == ["abcdefgh", "ijklmnop", "qrst"]
+    assert '"finish_reason":"stop"' in decoded_chunks[-2]
+    assert decoded_chunks[-1] == "data: [DONE]\n\n"
+
+
+@pytest.mark.asyncio
+async def test_simulate_chat_completion_uses_coalesced_tool_call_arguments():
+    arguments = '{"path":"/tmp/example.txt","mode":"read"}'
+    response_json = {
+        "id": "chatcmpl-coalesced-tool",
+        "created": 1700000000,
+        "choices": [{
+            "message": {
+                "content": "",
+                "tool_calls": [{
+                    "id": "call_semantic",
+                    "type": "function",
+                    "function": {
+                        "name": "read_file",
+                        "arguments": arguments
+                    }
+                }]
+            }
+        }]
+    }
+
+    generator = StreamSimulator.simulate_chat_completion(
+        response_json,
+        "test-model",
+        test_logger,
+        SSECoalescingConfig(enabled=True, window_ms=50, max_buffer_length=10),
+    )
+    chunks = [chunk async for chunk in generator]
+    decoded_chunks = [chunk.decode("utf-8") for chunk in chunks]
+
+    payloads = [
+        json.loads(chunk.replace("data: ", "").strip())
+        for chunk in decoded_chunks
+        if chunk.startswith("data: {")
+    ]
+    tool_deltas = [
+        payload["choices"][0]["delta"]["tool_calls"][0]
+        for payload in payloads
+        if "tool_calls" in payload["choices"][0]["delta"]
+    ]
+
+    assert len(tool_deltas) == 5
+    assert "".join(delta["function"]["arguments"] for delta in tool_deltas) == arguments
+    assert tool_deltas[0]["id"] == "call_semantic"
+    assert tool_deltas[0]["type"] == "function"
+    assert tool_deltas[0]["function"]["name"] == "read_file"
+    assert "id" not in tool_deltas[1]
+    assert "type" not in tool_deltas[1]
+    assert "name" not in tool_deltas[1]["function"]
+    assert '"finish_reason":"tool_calls"' in decoded_chunks[-2]
+    assert decoded_chunks[-1] == "data: [DONE]\n\n"
