@@ -10,7 +10,7 @@
 | **`models.py`** | **模型路由与发现 (`ModelsManager`)**：<br>1. **请求路由**: 匹配模型 ID，决定请求发往哪个后端端点并获取对应的 API Key。<br>2. **模型接管**: 启动时拉取并缓存模型列表，拦截 `/v1/models` 请求返回伪装列表。 |
 | **`handler.py`** | **核心代理编排器 (`ProxyHandler`)**：<br>接管请求、修改模型 ID、注入鉴权头，协调 `BackendClient`、流式处理器与响应聚合器。当前职责应保持在“路由编排与最终响应装配”，避免重新膨胀成双主流程处理器。 |
 | **`backend_client.py`** | **上游客户端适配层 (`BackendClient`)**：<br>位于 `ProxyHandler` 与 `httpx.AsyncClient` 之间，统一原生 SSE 与非流式 JSON 的内部表示，负责上游请求重试边界、原生流状态码语义以及非流式转内部事件流。 |
-| **`converter.py`** | **响应清洗引擎**：<br>匹配对应的解析器，处理后端返回的不同格式。例如统一提取 `<think>` 标签、`reasoning` 字段或 `reasoning_content` 字段的内容，转换为标准的推理内容输出。 |
+| **`converter.py`** | **响应清洗引擎**：<br>匹配对应的解析器，处理后端返回的不同格式。例如统一提取 `<think>` 标签、`reasoning` 字段或 `reasoning_content` 字段的内容，转换为标准的推理内容输出。<br>*(注：可通过 `config.yml` 中的 `chunk_parsers` 字段以“解析器 -> 关键词列表”的结构灵活配置解析规则与模型的绑定关系)* |
 | **`stream.py`** | **流式模拟器 (`StreamSimulator`)**：<br>提供非流式响应到内部增量 payload / SSE 的模拟能力。当前更多作为统一事件流架构中的内部实现细节，而不是由 handler 直接分叉调度的主路径。 |
 | **`stream_processor.py`** | **流式事件处理器 (`StreamEventProcessor`)**：<br>消费统一 SSE 事件，执行 converter 清洗、语义合包、边界 flush 和最终 SSE 编码。 |
 | **`response_assembler.py`** | **非流式响应聚合器**：<br>消费统一事件流并重新组装为标准的 `chat/completions` 或 `completions` JSON 响应。 |

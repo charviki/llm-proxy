@@ -77,23 +77,9 @@ You can run this project from **source code** or using **Docker Compose**. Regar
    cd llm-proxy
    ```
 2. Copy `config.example.yml` to `config.yml` in the project root.
-3. Modify the routing and model mapping rules in `config.yml` according to your actual backend services.
+3. Modify the routing and model mapping rules in `config.yml` according to your actual backend services. **(We highly recommend reading the comments inside `config.example.yml`, which contains detailed configuration examples for model routing, `chunk_parsers`, etc.)**
 4. If you want to reduce overly fragmented SSE events, optionally configure `sse_coalescing.enabled / window_ms / max_buffer_length` in `config.yml`. It is disabled by default to preserve existing behavior.
 5. **(For Docker Deployment)**: Copy `docker-compose.example.yml` to `docker-compose.yml`. If you have configured `api_key_env` in your `config.yml`, you must inject the corresponding real API Keys in the `environment` section of `docker-compose.yml` (or pass them via a `.env` file).
-
-`chunk_parsers` is now recommended to use a `parser -> keyword list` structure so you can see supported parsers more clearly in one place, for example:
-
-```yaml
-chunk_parsers:
-  think_tag:
-    - minimax
-    - anthropic
-  reasoning:
-    - gemini
-    - google
-  reasoning_content:
-    - deepseek
-```
 
 ### Method 1: Running from Source (Local Development)
 

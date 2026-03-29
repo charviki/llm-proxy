@@ -78,23 +78,9 @@
    cd llm-proxy
    ```
 2. 将项目根目录下的 `config.example.yml` 复制为 `config.yml`。
-3. 根据你的实际后端服务，修改 `config.yml` 中的路由和模型映射规则。
+3. 根据你的实际后端服务，修改 `config.yml` 中的路由和模型映射规则。**（强烈建议阅读 `config.example.yml` 内的注释，其中包含了模型路由、解析器 `chunk_parsers` 等详尽的配置示例）**
 4. 如果你希望减少过碎的 SSE 事件，可按需在 `config.yml` 中配置 `sse_coalescing.enabled / window_ms / max_buffer_length`；默认不启用，保持现有输出行为。
 5. **(如果是 Docker 部署)**：将项目根目录下的 `docker-compose.example.yml` 复制为 `docker-compose.yml`。如果你在 `config.yml` 中配置了 `api_key_env`，需要在 `docker-compose.yml` 的 `environment` 节点中注入对应的真实 API Key（或者通过 `.env` 文件传递）。
-
-`chunk_parsers` 现推荐使用“解析器 -> 关键词列表”的结构，便于集中查看当前支持的 parser，例如：
-
-```yaml
-chunk_parsers:
-  think_tag:
-    - minimax
-    - anthropic
-  reasoning:
-    - gemini
-    - google
-  reasoning_content:
-    - deepseek
-```
 
 ### 方式一：源码启动 (本地开发)
 
