@@ -9,6 +9,10 @@ def test_load_valid_config(tmp_path):
     domains:
       - api.example.com
     chunk_parsers:
+      reasoning:
+        - gemini
+        - google
+      think_tag: minimax
       default: reasoning_content
     backends:
       groups: []
@@ -23,6 +27,10 @@ def test_load_valid_config(tmp_path):
         - api.example.com
       port: 8443
       debug: true
+    sse_coalescing:
+      enabled: true
+      window_ms: 50
+      max_buffer_length: 512
     """
     config_file = tmp_path / "config.yml"
     config_file.write_text(config_content, encoding="utf-8")
@@ -35,6 +43,54 @@ def test_load_valid_config(tmp_path):
     assert config.server.debug is True
     assert len(config.backends.apis) == 1
     assert config.backends.apis[0].name == "Test API"
+    assert config.chunk_parsers == {
+        "reasoning": ["gemini", "google"],
+        "think_tag": ["minimax"],
+        "default": "reasoning_content",
+    }
+    assert config.sse_coalescing.enabled is True
+    assert config.sse_coalescing.window_ms == 50
+    assert config.sse_coalescing.max_buffer_length == 512
+
+
+def test_load_legacy_chunk_parsers_config_is_rejected(tmp_path):
+    config_content = """
+    chunk_parsers:
+      gemini: reasoning
+      google: reasoning
+      minimax: think_tag
+      default: reasoning_content
+    server:
+      domains:
+        - api.example.com
+      port: 443
+      debug: false
+    """
+    config_file = tmp_path / "config_legacy_chunk_parsers.yml"
+    config_file.write_text(config_content, encoding="utf-8")
+
+    loader = ConfigLoader(str(config_file))
+    with pytest.raises(ValueError, match="parser -> keywords"):
+        loader.load()
+
+
+def test_load_config_uses_default_sse_coalescing(tmp_path):
+    config_content = """
+    server:
+      domains:
+        - api.example.com
+      port: 443
+      debug: false
+    """
+    config_file = tmp_path / "config_default_sse.yml"
+    config_file.write_text(config_content, encoding="utf-8")
+
+    loader = ConfigLoader(str(config_file))
+    config = loader.load()
+
+    assert config.sse_coalescing.enabled is False
+    assert config.sse_coalescing.window_ms == 20
+    assert config.sse_coalescing.max_buffer_length == 256
 
 def test_load_missing_file():
     loader = ConfigLoader("non_existent_config.yml")

@@ -34,6 +34,8 @@ Many modern AI applications (like certain desktop clients, IDE plugins, etc.) ha
   - **Exact Mapping (API Routing)**: Allows seamless translation of a specific model name requested by the client (e.g., `my-custom-model-v1`) into the actual model name required by the backend (e.g., `claude-3-5-sonnet`), and routes it to a designated private endpoint. Perfect for "disguising" or "renaming" models for the client.
 - **Intelligent Reasoning Parsing**: Built-in parsers to adapt to the reasoning/thinking process output formats of different models (extracting specific `<think>` tags or separate `reasoning` fields), uniformly converting them into the standard OpenAI protocol format (e.g., `reasoning_content`) before returning to the client, ensuring correct rendering of the thought process on the client UI.
 - **Stream Simulation**: For backend services that do not support streaming output, the proxy can automatically downgrade to sending non-streaming requests. It then takes the complete response and simulates a standard SSE streaming output via the `StreamSimulator`, perfectly maintaining compatibility with client applications that strictly require streaming input.
+- **Unified Internal Event Stream Architecture**: Native SSE and non-streaming JSON are first normalized into a shared internal event stream, then consumed by either the streaming processor or the JSON assembler. This lets streaming cleanup, semantic coalescing, and JSON aggregation share the same core pipeline instead of maintaining two main branches.
+- **SSE Semantic Coalescing**: Consecutive `content` deltas and `arguments` deltas for the same `tool_call` can be merged based on a time window and buffer length threshold, reducing overly fragmented SSE events. The feature is disabled by default and can be tuned incrementally per environment.
 - **Runtime Traffic Recording & Replay**: Using FastAPI Middleware and a pluggable Transport Middleware chain, the proxy can record client request/response and backend request/response in real-time to JSON files in the `recordings/` directory. By sending an `X-Replay-Id` header, the proxy can seamlessly short-circuit backend requests and replay recorded mock responses, perfectly supporting isolated debugging and regression testing without consuming real tokens.
 
 ## ⚙️ How It Works
@@ -42,6 +44,7 @@ Many modern AI applications (like certain desktop clients, IDE plugins, etc.) ha
 2. **DNS Spoofing**: Modify the system's `hosts` file to point target domains (like `api.openai.com`) to the proxy server (e.g., `127.0.0.1`).
 3. **Seamless Forwarding**: Requests sent by client applications are intercepted, re-routed, and modified before being sent to the actual custom LLM service.
 4. **Model Discovery Takeover**: Many clients request `/v1/models` on startup to get available models. `llm-proxy` completely takes over this request. During service startup, it actively calls remote backend interfaces or reads local cache files (e.g., in the `models/` directory) to load and merge all supported models, and then returns this combined list directly to the client without forwarding the request.
+5. **Unified Response Handling**: For core endpoints such as `chat/completions`, the proxy first converts either native streaming responses or non-streaming JSON into a shared internal event stream through `BackendClient`, and then routes that stream to the SSE processor or the JSON assembler.
 
 ---
 
@@ -75,7 +78,22 @@ You can run this project from **source code** or using **Docker Compose**. Regar
    ```
 2. Copy `config.example.yml` to `config.yml` in the project root.
 3. Modify the routing and model mapping rules in `config.yml` according to your actual backend services.
-4. **(For Docker Deployment)**: Copy `docker-compose.example.yml` to `docker-compose.yml`. If you have configured `api_key_env` in your `config.yml`, you must inject the corresponding real API Keys in the `environment` section of `docker-compose.yml` (or pass them via a `.env` file).
+4. If you want to reduce overly fragmented SSE events, optionally configure `sse_coalescing.enabled / window_ms / max_buffer_length` in `config.yml`. It is disabled by default to preserve existing behavior.
+5. **(For Docker Deployment)**: Copy `docker-compose.example.yml` to `docker-compose.yml`. If you have configured `api_key_env` in your `config.yml`, you must inject the corresponding real API Keys in the `environment` section of `docker-compose.yml` (or pass them via a `.env` file).
+
+`chunk_parsers` is now recommended to use a `parser -> keyword list` structure so you can see supported parsers more clearly in one place, for example:
+
+```yaml
+chunk_parsers:
+  think_tag:
+    - minimax
+    - anthropic
+  reasoning:
+    - gemini
+    - google
+  reasoning_content:
+    - deepseek
+```
 
 ### Method 1: Running from Source (Local Development)
 
@@ -139,14 +157,14 @@ Locate the `ca/llm-proxy-ca.crt` file (this is the root CA certificate) generate
 Modify your system's hosts file to point the domains you want to hijack (corresponding to `server.domains` in `config.yml`) to the proxy server's IP address.
 
 - **Default Case**: point to `127.0.0.1`.
-- **Using Port Forwarding Solution**: point to `127.0.0.2` (See the FAQ section at the end for details).
+- **If you hit local 443, VPN, or proxy-software conflicts**: try binding the proxy to another loopback IP and point hosts to that address instead.
 
 Edit the file (macOS/Linux: `/etc/hosts`, Windows: `C:\Windows\System32\drivers\etc\hosts`) and add:
 
 ```text
 # llm-proxy hijacking
 127.0.0.1 api.openai.com
-# If using the port forwarding fallback solution, use:
+# If you bind to another loopback IP instead, you can point to that address, for example:
 # 127.0.0.2 api.openai.com
 ```
 
@@ -156,178 +174,16 @@ Once done, all requests made by the target application to `api.openai.com` will 
 
 ## ❓ FAQ & Special Environment Configuration
 
-### Resolving 443 Port & VPN Conflicts (Fallback Solution)
+### Resolving 443 Port & VPN Conflicts (Recommendation)
 
 By default, the container in `docker-compose.yml` listens on the local `443` port (`443:443`). In most cases, this is sufficient. 
 
-However, this may cause port conflicts with other web services like Nginx running on the host, or **it is highly prone to routing or port takeover conflicts when certain VPN or proxy software (like Clash, Surge, etc.) is active, which can prevent the proxy from hijacking requests normally**. At this point, you need to adopt the **Loopback + Port Forwarding** fallback solution.
+However, this may cause port conflicts with other web services like Nginx running on the host, or **it is highly prone to routing or port takeover conflicts when certain VPN or proxy software (like Clash, Surge, etc.) is active, which can prevent the proxy from hijacking requests normally**.
 
-The core idea of this solution is: Let the container listen to port `18443`, and configure an independent loopback IP (like `127.0.0.2` or `127.0.0.3`) in the system to forward the 443 port traffic sent to this IP to the local 18443.
+The recommended approach is:
 
-**Step 1: Modify Port Mapping**
-Change the `ports` in `docker-compose.yml` to listen on the local `18443` port:
-```yaml
-ports:
-  - "18443:443"
-```
+1. Bind the proxy directly to another unused loopback IP.
+2. Point the corresponding hosts entry to that loopback IP.
+3. Choose any forwarding or listening strategy that fits your local network environment.
 
-**Step 2: Configure Port Forwarding and Hosts Based on Your System**
-
-#### ▶ Linux / macOS Host
-
-1. Run the provided network setup scripts to forward requests sent to `127.0.0.2:443` to the local `18443` port:
-   ```bash
-   # Temporary effect (lost after reboot)
-   sudo bash scripts/setup_network.sh
-   
-   # Persistent effect (Recommended, registers as an auto-start service)
-   sudo bash scripts/setup_network.sh --install
-   ```
-2. **Modify Hosts**: In the client's `/etc/hosts`, point the domains you need to hijack to `127.0.0.2`.
-
-#### ▶ Windows Host (Without WSL Development)
-
-1. Open PowerShell with **Administrator privileges** and execute the script to forward requests sent to `127.0.0.2:443` to the local `18443` port:
-   ```powershell
-   .\scripts\setup_network.ps1
-   ```
-2. **Modify Hosts**: In the Windows Hosts file, point the domains you need to hijack to `127.0.0.2`.
-
-#### ▶ Windows + WSL Development Environment (e.g., VSCode WSL)
-
-If you are developing in WSL, because the port has changed to 18443, WSL cannot directly access the proxy container on the host. You must separately configure the `127.0.0.3` loopback and forwarding for WSL:
-
-1. **Enable Mirrored Networking Mode**
-   Add or modify the `C:\Users\<YourUsername>\.wslconfig` file in Windows:
-   ```ini
-   [wsl2]
-   networkingMode=mirrored
-   ```
-   *(After modification, please restart WSL: Execute `wsl --shutdown` in Windows PowerShell)*
-
-2. **Disable Auto-Generation of Hosts in WSL**
-   Enter WSL, edit `/etc/wsl.conf`:
-   ```ini
-   [network]
-   generateHosts = false
-   ```
-
-3. **Configure WSL Hosts**
-   Add hijacking records in WSL's `/etc/hosts`:
-   ```text
-   127.0.0.3 api.openai.com
-   ```
-
-4. **Configure WSL systemd Service for Port Forwarding**
-   Execute the following commands in WSL to install `socat` and create a `systemd` service to forward `127.0.0.3:443` traffic to the host-visible `18443` port:
-   ```bash
-   sudo apt update && sudo apt install socat
-   
-   sudo tee /etc/systemd/system/llm-proxy.service << 'EOF'
-   [Unit]
-   Description=LLM API Proxy (127.0.0.3:443 -> 127.0.0.1:18443)
-   After=network.target
-
-   [Service]
-   Type=simple
-   ExecStartPre=-/sbin/ip addr add 127.0.0.3/8 dev lo
-   ExecStart=/usr/bin/socat TCP-LISTEN:443,bind=127.0.0.3,reuseaddr,fork TCP:127.0.0.1:18443
-   ExecStopPost=-/sbin/ip addr del 127.0.0.3/8 dev lo
-   Restart=always
-   RestartSec=3
-
-   [Install]
-   WantedBy=multi-user.target
-   EOF
-
-   sudo systemctl daemon-reload
-   sudo systemctl enable --now llm-proxy.service
-   ```
-
-### Resolving 443 Port & VPN Conflicts (Fallback Solution)
-
-By default, the container in `docker-compose.yml` listens on the local `443` port (`443:443`). In most cases, this is sufficient. 
-
-However, this may cause port conflicts with other web services like Nginx running on the host, or **it is highly prone to routing or port takeover conflicts when certain VPN or proxy software (like Clash, Surge, etc.) is active, which can prevent the proxy from hijacking requests normally**. At this point, you need to adopt the **Loopback + Port Forwarding** fallback solution.
-
-The core idea of this solution is: Let the container listen to port `18443`, and configure an independent loopback IP (like `127.0.0.2` or `127.0.0.3`) in the system to forward the 443 port traffic sent to this IP to the local 18443.
-
-**Step 1: Modify Port Mapping**
-Change the `ports` in `docker-compose.yml` to listen on the local `18443` port:
-```yaml
-ports:
-  - "18443:443"
-```
-
-**Step 2: Configure Port Forwarding and Hosts Based on Your System**
-
-#### ▶ Linux / macOS Host
-
-1. Run the provided network setup scripts to forward requests sent to `127.0.0.2:443` to the local `18443` port:
-   ```bash
-   # Temporary effect (lost after reboot)
-   sudo bash scripts/setup_network.sh
-   
-   # Persistent effect (Recommended, registers as an auto-start service)
-   sudo bash scripts/setup_network.sh --install
-   ```
-2. **Modify Hosts**: In the client's `/etc/hosts`, point the domains you need to hijack to `127.0.0.2`.
-
-#### ▶ Windows Host (Without WSL Development)
-
-1. Open PowerShell with **Administrator privileges** and execute the script to forward requests sent to `127.0.0.2:443` to the local `18443` port:
-   ```powershell
-   .\scripts\setup_network.ps1
-   ```
-2. **Modify Hosts**: In the Windows Hosts file, point the domains you need to hijack to `127.0.0.2`.
-
-#### ▶ Windows + WSL Development Environment (e.g., VSCode WSL)
-
-If you are developing in WSL, because the port has changed to 18443, WSL cannot directly access the proxy container on the host. You must separately configure the `127.0.0.3` loopback and forwarding for WSL:
-
-1. **Enable Mirrored Networking Mode**
-   Add or modify the `C:\Users\<YourUsername>\.wslconfig` file in Windows:
-   ```ini
-   [wsl2]
-   networkingMode=mirrored
-   ```
-   *(After modification, please restart WSL: Execute `wsl --shutdown` in Windows PowerShell)*
-
-2. **Disable Auto-Generation of Hosts in WSL**
-   Enter WSL, edit `/etc/wsl.conf`:
-   ```ini
-   [network]
-   generateHosts = false
-   ```
-
-3. **Configure WSL Hosts**
-   Add hijacking records in WSL's `/etc/hosts`:
-   ```text
-   127.0.0.3 api.openai.com
-   ```
-
-4. **Configure WSL systemd Service for Port Forwarding**
-   Execute the following commands in WSL to install `socat` and create a `systemd` service to forward `127.0.0.3:443` traffic to the host-visible `18443` port:
-   ```bash
-   sudo apt update && sudo apt install socat
-   
-   sudo tee /etc/systemd/system/llm-proxy.service << 'EOF'
-   [Unit]
-   Description=LLM API Proxy (127.0.0.3:443 -> 127.0.0.1:18443)
-   After=network.target
-
-   [Service]
-   Type=simple
-   ExecStartPre=-/sbin/ip addr add 127.0.0.3/8 dev lo
-   ExecStart=/usr/bin/socat TCP-LISTEN:443,bind=127.0.0.3,reuseaddr,fork TCP:127.0.0.1:18443
-   ExecStopPost=-/sbin/ip addr del 127.0.0.3/8 dev lo
-   Restart=always
-   RestartSec=3
-
-   [Install]
-   WantedBy=multi-user.target
-   EOF
-
-   sudo systemctl daemon-reload
-   sudo systemctl enable --now llm-proxy.service
-   ```
+For example, you can try `127.0.0.2`, `127.0.0.3`, or another loopback address; the important rule is that **the proxy listen address, certificate trust environment, and hosts target must stay aligned**.

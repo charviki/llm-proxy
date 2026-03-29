@@ -135,7 +135,7 @@ async def test_project_analysis_<format>(mock_logger, parser_matcher):
 
     # 根据格式选择合适的 parser
     format_matcher = ChunkConverterMatcher({
-        "model_keyword": "<parser_type>",  # think_tag / reasoning / reasoning_content
+        "<parser_type>": ["model_keyword"],  # think_tag / reasoning / reasoning_content
         "default": "reasoning_content"
     })
 
@@ -174,7 +174,7 @@ python -m pytest tests/agent/ -v
 
 ### Parser 关键词匹配
 请求中的 `custom_model_id` 必须包含配置文件中的关键词：
-- 配置 `{"minimax": "think_tag"}`
+- 配置 `{"think_tag": ["minimax"]}`
 - 请求 `custom_model_id="minimax-project-analyzer"` ✓
 - 请求 `custom_model_id="project-analyzer"` ✗
 

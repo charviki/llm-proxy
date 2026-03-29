@@ -10,7 +10,7 @@ from config import ConfigLoader
 from proxy import ProxyHandler, ChunkConverterMatcher, RecordingMiddleware, ProxyTransport, TransportRecordingMiddleware, ReplayMiddleware
 from routes import register_routes
 
-logger = logging.getLogger('llm_proxy')
+logger = logging.getLogger('llm-roxy')
 
 proxy_handler: ProxyHandler
 config = None
@@ -58,8 +58,6 @@ def main() -> None:
         sys.exit(1)
 
     log_level = logging.DEBUG if config.server.debug else logging.INFO
-    # 清理可能已经存在的处理器，防止重复打印
-    logging.getLogger().handlers.clear()
 
     # 移除所有 uvicorn 相关的 logger 的 handler
     for name in logging.root.manager.loggerDict:
@@ -82,7 +80,8 @@ def main() -> None:
     proxy_handler = ProxyHandler(
         backends=config.backends,
         logger=logger,
-        parser_matcher=parser_matcher
+        parser_matcher=parser_matcher,
+        sse_coalescing_config=config.sse_coalescing,
     )
 
     app = FastAPI(title="LLM-Proxy", lifespan=lifespan)
@@ -104,7 +103,6 @@ def main() -> None:
     uvicorn_kwargs = {
         "host": "0.0.0.0",
         "port": config.server.port,
-        "log_config": None, # 禁用 Uvicorn 默认日志配置，统一使用根日志配置
     }
     if config.server.key_file and config.server.cert_file:
         uvicorn_kwargs["ssl_keyfile"] = config.server.key_file

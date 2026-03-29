@@ -1,10 +1,13 @@
 """代理模块 - OpenAI 协议代理核心"""
 from .stream import StreamSimulator
+from .sse_coalescer import SSESemanticCoalescer
+from .backend_client import BackendClient
+from .stream_processor import StreamEventProcessor
 from .handler import ProxyHandler
 from .converter import (
     BaseChunkConverter,
     ThinkTagChunkConverter,
-    GeminiChunkConverter,
+    ReasoningChunkConverter,
     ReasoningContentChunkConverter,
     ChunkConverterMatcher,
     create_parser,
@@ -17,16 +20,18 @@ from .context import (
     set_replay_id,
     clear_replay_id,
 )
-from .interceptors import Interceptor
 from .recording_interceptor import TransportRecordingMiddleware
 from .recorder import RecordingContext
 
 __all__ = [
     "StreamSimulator",
+    "SSESemanticCoalescer",
+    "BackendClient",
+    "StreamEventProcessor",
     "ProxyHandler",
     "BaseChunkConverter",
     "ThinkTagChunkConverter",
-    "GeminiChunkConverter",
+    "ReasoningChunkConverter",
     "ReasoningContentChunkConverter",
     "ChunkConverterMatcher",
     "create_parser",
@@ -34,7 +39,6 @@ __all__ = [
     "RecordingMiddleware",
     "ProxyTransport",
     "ReplayMiddleware",
-    "Interceptor",
     "TransportRecordingMiddleware",
     "RecordingContext",
     "get_replay_id",

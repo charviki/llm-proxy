@@ -11,7 +11,7 @@ def register_routes(app: FastAPI, handler: ProxyHandler) -> None:
     async def root():
         """处理根路径请求"""
         return {
-            "message": "Welcome to the API! Documentation is available at https://platform.openai.com/docs/api-reference"
+            "message": "Welcome to the API!"
         }
 
     @app.get("/v1")

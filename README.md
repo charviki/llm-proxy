@@ -34,6 +34,8 @@
   - **精确映射 (API Routing)**：允许将客户端请求的特定模型名称（例如 `my-custom-model-v1`）在代理层无缝转换为后端真实需要的模型名称（例如 `claude-3-5-sonnet`），并转发到指定的私有部署地址。适合为客户端“伪装”或“重命名”模型。
 - **智能推理过程 (Reasoning) 解析**：内置强大的解析器，可适配不同模型的思考过程输出格式（提取特定的 `<think>` 标签或独立的 `reasoning` 字段等），并统一将其转化为标准 OpenAI 协议格式（如 `reasoning_content`）返回给客户端，确保客户端 UI 能够正确渲染思考过程。
 - **流式模拟 (Stream Simulation)**：对于不支持流式输出的后端服务，代理可自动降级发送非流式请求，拿到完整响应后，通过 `StreamSimulator` 模拟成标准的 SSE 流式输出，完美兼容强制要求流式输入的客户端。
+- **统一内部事件流架构**：原生 SSE 与非流式 JSON 会先统一转换为内部事件流，再分别进入流式处理器或非流式聚合器。这让流式清洗、语义合包与 JSON 聚合共享同一套核心处理链，显著降低双分支维护成本。
+- **面向 SSE 的语义合包 (Semantic Coalescing)**：可按时间窗口与长度阈值合并连续 `content` 增量和同一 `tool_call` 的 `arguments` 增量，减少过碎 SSE 事件数量；默认关闭，可按环境逐步调优。
 - **运行时流量录制与重放 (Traffic Recording & Replay)**：通过 FastAPI Middleware 和可插拔的 Transport 中间件链，实时录制客户端请求/响应以及后端请求/响应到 JSON 文件。支持通过发送携带 `X-Replay-Id` 的请求，在运行时无缝短路后端请求并重放录制的 Mock 响应，完美支持不消耗 Token 的隔离调试与回归测试。
 
 ## ⚙️ 原理与工作流
@@ -42,6 +44,7 @@
 2. **DNS 欺骗**：修改系统的 `hosts` 文件，将目标域名（如 `api.openai.com`）指向代理服务器（如 `127.0.0.1`）。
 3. **无缝转发**：客户端应用发送的请求会被代理截获，重新路由并修改参数后，发送给真实的自定义 LLM 服务。
 4. **模型列表接管 (Model Discovery)**：许多客户端启动时会请求 `/v1/models` 获取可用模型。`llm-proxy` 会直接接管此请求，在服务启动时主动调用远端接口或读取本地缓存文件（如 `models/` 目录下）加载并合并所有支持的模型，最后将组合好的模型列表返回给客户端。
+5. **统一响应处理**：对于 `chat/completions` 等核心接口，代理会先通过 `BackendClient` 把上游原生流式或非流式结果统一转换为内部事件流，再交给流式处理器输出 SSE，或交给响应聚合器输出 JSON。
 
 ---
 
@@ -76,7 +79,22 @@
    ```
 2. 将项目根目录下的 `config.example.yml` 复制为 `config.yml`。
 3. 根据你的实际后端服务，修改 `config.yml` 中的路由和模型映射规则。
-4. **(如果是 Docker 部署)**：将项目根目录下的 `docker-compose.example.yml` 复制为 `docker-compose.yml`。如果你在 `config.yml` 中配置了 `api_key_env`，需要在 `docker-compose.yml` 的 `environment` 节点中注入对应的真实 API Key（或者通过 `.env` 文件传递）。
+4. 如果你希望减少过碎的 SSE 事件，可按需在 `config.yml` 中配置 `sse_coalescing.enabled / window_ms / max_buffer_length`；默认不启用，保持现有输出行为。
+5. **(如果是 Docker 部署)**：将项目根目录下的 `docker-compose.example.yml` 复制为 `docker-compose.yml`。如果你在 `config.yml` 中配置了 `api_key_env`，需要在 `docker-compose.yml` 的 `environment` 节点中注入对应的真实 API Key（或者通过 `.env` 文件传递）。
+
+`chunk_parsers` 现推荐使用“解析器 -> 关键词列表”的结构，便于集中查看当前支持的 parser，例如：
+
+```yaml
+chunk_parsers:
+  think_tag:
+    - minimax
+    - anthropic
+  reasoning:
+    - gemini
+    - google
+  reasoning_content:
+    - deepseek
+```
 
 ### 方式一：源码启动 (本地开发)
 
@@ -140,14 +158,14 @@
 修改系统的 hosts 文件，将你需要劫持的域名（对应 `config.yml` 中的 `server.domains`）指向代理服务器的 IP 地址。
 
 - **默认情况**：指向 `127.0.0.1`。
-- **使用了端口转发方案**：指向 `127.0.0.2` (详见文末的端口冲突解决方案)。
+- **如遇本地 443 端口、VPN 或其他代理软件冲突**：可尝试让代理绑定到其他回环 IP，再把 hosts 指向对应地址。
 
 编辑文件（macOS/Linux: `/etc/hosts`，Windows: `C:\Windows\System32\drivers\etc\hosts`），添加：
 
 ```text
 # llm-proxy 劫持
 127.0.0.1 api.openai.com
-# 如果配置了端口转发备用方案，请使用：
+# 如果你改为绑定其他回环 IP，也可以改成对应地址，例如：
 # 127.0.0.2 api.openai.com
 ```
 
@@ -157,98 +175,16 @@
 
 ## ❓ 常见问题与特殊环境配置
 
-### 解决 443 端口与 VPN 冲突（备用方案）
+### 解决 443 端口与 VPN 冲突（建议）
 
 默认情况下，`docker-compose.yml` 中容器监听的是本地 `443` 端口 (`443:443`)。在大多数情况下，这样已经足够。
 
-但是，这可能会与宿主机上运行的 Nginx 等其他 Web 服务产生端口冲突，或者**在开启某些 VPN 或代理软件（如 Clash、Surge 等）时，极易发生路由或端口接管冲突，导致无法正常劫持请求**。此时，你需要采用 **回环网卡 + 端口转发** 的备用方案。
+但是，这可能会与宿主机上运行的 Nginx 等其他 Web 服务产生端口冲突，或者**在开启某些 VPN 或代理软件（如 Clash、Surge 等）时，极易发生路由或端口接管冲突，导致无法正常劫持请求**。
 
-该方案的核心思想是：让容器监听 `18443`，并在系统中配置一个独立的回环 IP（如 `127.0.0.2` 或 `127.0.0.3`），将发往该 IP 的 443 端口流量转发至本地的 18443。
+更推荐的做法是：
 
-**第一步：修改端口映射**
-将 `docker-compose.yml` 中的 `ports` 修改为监听本地 `18443` 端口：
+1. 让代理直接绑定到一个未被占用的其他回环 IP。
+2. 将 hosts 中对应域名改为该回环 IP。
+3. 根据你的本机网络环境，自行选择合适的转发或监听方式。
 
-```yaml
-ports:
-  - "18443:443"
-```
-
-**第二步：根据你的系统环境配置端口转发与 Hosts**
-
-#### ▶ Linux / macOS 宿主机
-
-1. 运行提供的网络配置脚本，将发往 `127.0.0.2:443` 的请求转发至本地的 `18443` 端口：
-
-   ```bash
-   # 临时生效（重启后丢失）
-   sudo bash scripts/setup_network.sh
-
-   # 永久生效（推荐，将注册为开机自启服务）
-   sudo bash scripts/setup_network.sh --install
-   ```
-
-2. **修改 Hosts**：在客户端的 `/etc/hosts` 中，将需要劫持的域名指向 `127.0.0.2`。
-
-#### ▶ Windows 宿主机 (不使用 WSL 开发)
-
-1. 使用 **管理员权限** 打开 PowerShell 并执行脚本，将发往 `127.0.0.2:443` 的请求转发至本地的 `18443` 端口：
-   ```powershell
-   .\scripts\setup_network.ps1
-   ```
-2. **修改 Hosts**：在 Windows 的 Hosts 文件中，将需要劫持的域名指向 `127.0.0.2`。
-
-#### ▶ Windows + WSL 开发环境 (如 VSCode WSL)
-
-如果你在 WSL 中进行开发，由于端口改为了 18443，WSL 无法直接访问宿主机的代理容器。你需要为 WSL 单独配置 `127.0.0.3` 的回环与转发：
-
-1. **启用 Mirrored 网络模式**
-   在 Windows 的 `C:\Users\<YourUsername>\.wslconfig` 文件中添加或修改：
-
-   ```ini
-   [wsl2]
-   networkingMode=mirrored
-   ```
-
-   _(修改后请重启 WSL: 在 Windows PowerShell 中执行 `wsl --shutdown`)_
-
-2. **关闭 WSL 自动生成 hosts**
-   进入 WSL，编辑 `/etc/wsl.conf`：
-
-   ```ini
-   [network]
-   generateHosts = false
-   ```
-
-3. **配置 WSL Hosts**
-   在 WSL 的 `/etc/hosts` 中添加劫持记录：
-
-   ```text
-   127.0.0.3 api.openai.com
-   ```
-
-4. **配置 WSL 的 systemd 服务进行端口转发**
-   在 WSL 中执行以下命令，安装 `socat` 并创建 `systemd` 服务，将 `127.0.0.3:443` 的流量转发到宿主机可见的 `18443` 端口：
-
-   ```bash
-   sudo apt update && sudo apt install socat
-
-   sudo tee /etc/systemd/system/llm-proxy.service << 'EOF'
-   [Unit]
-   Description=LLM API Proxy (127.0.0.3:443 -> 127.0.0.1:18443)
-   After=network.target
-
-   [Service]
-   Type=simple
-   ExecStartPre=-/sbin/ip addr add 127.0.0.3/8 dev lo
-   ExecStart=/usr/bin/socat TCP-LISTEN:443,bind=127.0.0.3,reuseaddr,fork TCP:127.0.0.1:18443
-   ExecStopPost=-/sbin/ip addr del 127.0.0.3/8 dev lo
-   Restart=always
-   RestartSec=3
-
-   [Install]
-   WantedBy=multi-user.target
-   EOF
-
-   sudo systemctl daemon-reload
-   sudo systemctl enable --now llm-proxy.service
-   ```
+例如，你可以尝试使用 `127.0.0.2`、`127.0.0.3` 等其他回环地址；关键原则是**代理监听地址、证书信任环境与 hosts 指向必须保持一致**。

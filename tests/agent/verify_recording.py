@@ -176,10 +176,23 @@ def find_latest_recording_suffix(recordings_dir: Path, prefix: str) -> Optional[
     return None
 
 
+def get_all_recording_suffixes(recordings_dir: Path, prefix: str) -> set[str]:
+    """获取所有录制文件的后缀集合"""
+    pattern = f"{prefix}__*__client_request.json"
+    files = list(recordings_dir.glob(pattern))
+    suffixes = set()
+    for f in files:
+        name = f.stem
+        parts = name.rsplit("__", 2)
+        if len(parts) >= 2:
+            suffixes.add(parts[1])
+    return suffixes
+
+
 def wait_for_new_recording(
     recordings_dir: Path,
     prefix: str,
-    existing_suffix: str,
+    before_suffixes: set[str],
     timeout: float = 10.0,
     poll_interval: float = 0.5
 ) -> Optional[str]:
@@ -188,7 +201,7 @@ def wait_for_new_recording(
     Args:
         recordings_dir: 录制目录
         prefix: 录制前缀
-        existing_suffix: 已存在的 suffix（避免重复检测）
+        before_suffixes: 验证开始前已存在的后缀集合
         timeout: 超时时间（秒）
         poll_interval: 轮询间隔（秒）
 
@@ -199,9 +212,10 @@ def wait_for_new_recording(
     start = time.time()
 
     while time.time() - start < timeout:
-        new_suffix = find_latest_recording_suffix(recordings_dir, prefix)
-        if new_suffix and new_suffix != existing_suffix:
-            return new_suffix
+        current_suffixes = get_all_recording_suffixes(recordings_dir, prefix)
+        new_suffixes = current_suffixes - before_suffixes
+        if new_suffixes:
+            return new_suffixes.pop()
         time.sleep(poll_interval)
 
     return None
@@ -282,6 +296,9 @@ async def main():
 
     print("发送重放请求到 llm-proxy...")
     start_time = time.time()
+    
+    # 获取请求前的所有录制后缀，用于后续判断是否产生新录制
+    before_suffixes = get_all_recording_suffixes(recordings_dir, args.recording_prefix)
 
     async with httpx.AsyncClient(timeout=120.0, verify=False) as client:
         status_code, chunks, _ = await send_request_and_collect_response(
@@ -296,7 +313,7 @@ async def main():
 
     # 在 Replay 模式下，不应该产生新的录制文件
     print("⏳ 验证重放短路（确保不产生新录制）...")
-    new_suffix = wait_for_new_recording(recordings_dir, args.recording_prefix, args.recording_suffix, timeout=3.0)
+    new_suffix = wait_for_new_recording(recordings_dir, args.recording_prefix, before_suffixes, timeout=3.0)
 
     if new_suffix:
         print(f"❌ 严重错误: 重放模式下产生了新的录制文件: {new_suffix}")

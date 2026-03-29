@@ -42,7 +42,7 @@ def mock_logger():
 @pytest.fixture
 def parser_matcher(mock_logger):
     # 录制数据是 MiniMax 的（包含 think 标签），使用 think_tag parser
-    return ChunkConverterMatcher({"minimax": "think_tag", "default": "reasoning_content"}, mock_logger)
+    return ChunkConverterMatcher({"think_tag": ["minimax"], "default": "reasoning_content"}, mock_logger)
 
 
 def load_mock_data(mock_name: str = "project_analysis__stream_think") -> dict:
@@ -446,7 +446,7 @@ async def test_project_analysis__reasoning_field(mock_logger, parser_matcher):
     _skip_if_no_reasoning_mock_data()
 
     # 使用 reasoning parser
-    reasoning_matcher = ChunkConverterMatcher({"minimax": "reasoning", "default": "reasoning_content"}, mock_logger)
+    reasoning_matcher = ChunkConverterMatcher({"reasoning": ["minimax"], "default": "reasoning_content"}, mock_logger)
 
     mock_data = load_mock_data("project_analysis__stream_reasoning")
 
@@ -561,4 +561,3 @@ async def test_project_analysis__reasoning_field(mock_logger, parser_matcher):
                 f"Round {i+1} reasoning 不匹配:\n期望: {normalize_text(expected_reasoning)[:100]}...\n实际: {normalize_text(round_output['reasoning'])[:100]}..."
 
     print(f"\n✅ Reasoning 字段测试通过！共 {actual_rounds} 轮")
-

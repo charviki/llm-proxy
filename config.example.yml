@@ -1,17 +1,21 @@
 # LLM-Proxy 配置文件示例
 # 请将此文件复制为 config.yml 并根据实际情况修改配置
 
-# 思考解析器配置（custom_model_id 的匹配关键词 -> 解析器类型）
+# 思考解析器配置（解析器类型 -> custom_model_id 匹配关键词列表）
 # 当客户端请求的 custom_model_id 中包含以下关键词时，将使用对应的解析器
-# 解析器类型: 
+# 支持的解析器类型:
 # - think_tag (使用 <think> 标签的推理过程)
 # - reasoning (返回数据中带有 reasoning 字段)
 # - reasoning_content (返回数据中带有 reasoning_content 字段)
 chunk_parsers:
-  minimax: think_tag  # 匹配 custom_model_id 包含 minimax 的请求
-  gemini: reasoning
-  google: reasoning
-  anthropic: think_tag
+  think_tag:
+    - minimax
+    - anthropic
+  reasoning:
+    - gemini
+    - google
+  reasoning_content:
+    - deepseek
   # 如果请求的模型没有匹配到以上任何关键词，将默认认为其是符合 OpenAI 标准的模型（直接透传）
 
 # 后端配置
@@ -48,6 +52,13 @@ server:
   debug: true # 是否开启 debug 模式
   cert_file: "ca/llm-proxy.crt" # 证书文件路径
   key_file: "ca/llm-proxy.key" # 私钥文件路径
+
+# SSE 语义合包配置（默认关闭）
+# 开启后会在流式输出阶段按时间窗口和长度阈值合并连续增量
+sse_coalescing:
+  enabled: false # 默认关闭；需要启用时改为 true
+  window_ms: 20 # 时间窗口（毫秒）
+  max_buffer_length: 256 # 单次 flush 前允许累计的最大字符数
 
 # 流量录制配置（默认关闭）
 # 启用后会实时录制客户端和后端的请求/响应到 recordings/ 目录

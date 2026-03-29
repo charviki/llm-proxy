@@ -3,8 +3,8 @@ import json
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Optional
 from enum import IntEnum
+from typing import Optional
 
 
 @dataclass
@@ -39,15 +39,6 @@ class BaseChunkConverter:
     def process_chunk(self, delta: dict) -> ReasoningContent:
         """
         兜底处理，直接返回原始 content，不提取 reasoning
-        流式和非流式请求均使用此接口
-        """
-        content = delta.get("content", None)
-        return ReasoningContent(reasoning=None, content=content)
-
-
-    def process_chunk(self, delta: dict) -> ReasoningContent:
-        """
-        兜底处理，直接返回原始 content，不提取 reasoning
         为非流式请求提供兼容的接口调用
         """
         content = delta.get("content", None)
@@ -71,7 +62,7 @@ class AbstractReasoningConverter(BaseChunkConverter, ABC):
         处理原始 data 字符串，返回处理后的 data 字符串。
         如果返回 None，表示该 chunk 为空，应被丢弃。
         """
-        # 如果思考阶段已结束，仅做 model ID 回映射后透传
+        # 一旦确认后续不再有思考字段，走极速透传路径，避免每个 chunk 都重复做提取逻辑。
         if self.think_state == ThinkState.FINISHED:
             try:
                 data = json.loads(data_str)
@@ -95,22 +86,26 @@ class AbstractReasoningConverter(BaseChunkConverter, ABC):
             if choices and len(choices) > 0:
                 delta = choices[0].get("delta", {})
 
-                # 原地提取思考内容到 reasoning_content
+                # process_chunk 会直接读取并复用现有 delta，避免额外构造中间对象。
                 result = self.process_chunk(delta)
 
-                # 清理私有字段
+                # 上游私有字段统一在这里抹平，后续流式/非流式消费者只感知标准字段。
                 delta.pop("reasoning", None)
                 delta.pop("reasoning_details", None)
 
-                # 提取出 thinking 后设置标准字段
+                # 只有存在思考文本时才补 reasoning_content，避免制造空字符串增量。
                 if result.reasoning:
                     delta["reasoning_content"] = result.reasoning
 
-                # 保留处理后的 content
-                if result.content:
-                    delta["content"] = result.content
+                # 对 think_tag / reasoning 这类“从 content 中剥离思考”的场景，
+                # 如果正文已经被完整消费掉，必须把原始 content 删掉，避免客户端看到重复文本。
+                if "content" in delta:
+                    if result.content:
+                        delta["content"] = result.content
+                    else:
+                        delta.pop("content", None)
 
-                # 处理后 delta 为空则丢弃
+                # 某些纯思考 chunk 在标准化后可能什么都不剩，这类 chunk 应直接丢弃。
                 if not delta:
                     return None
 
@@ -127,6 +122,21 @@ class AbstractReasoningConverter(BaseChunkConverter, ABC):
         pass
 
 
+CHUNK_PARSER_REGISTRY: dict[str, type[BaseChunkConverter]] = {}
+
+
+def register_chunk_parser(parser_type: str):
+    def decorator(parser_cls: type[BaseChunkConverter]) -> type[BaseChunkConverter]:
+        if parser_type in CHUNK_PARSER_REGISTRY:
+            raise ValueError(f"重复注册 chunk parser: {parser_type}")
+        parser_cls.parser_type = parser_type
+        CHUNK_PARSER_REGISTRY[parser_type] = parser_cls
+        return parser_cls
+
+    return decorator
+
+
+@register_chunk_parser("think_tag")
 class ThinkTagChunkConverter(AbstractReasoningConverter):
     """Think Tag 转换器 - 处理 <think> 和 </think> 标签包裹的思考内容
 
@@ -152,7 +162,7 @@ class ThinkTagChunkConverter(AbstractReasoningConverter):
 
         if self.think_state == ThinkState.THINKING:
             if "</think>" in content:
-                # 思考结束，分离残留思考与正文
+                # 结束标签和正文可能落在同一个 chunk 里，需要一次性拆开。
                 parts = content.split("</think>", 1)
                 reasoning_content = parts[0]
                 normal_content = parts[1]
@@ -168,7 +178,7 @@ class ThinkTagChunkConverter(AbstractReasoningConverter):
                 parts = content.split("<think>", 1)
                 normal_content = parts[0]
 
-                # 检查是否在同一个 chunk 内直接结束了思考（非常罕见但可能发生）
+                # 有些模型会把 <think>...</think> 和正文一次性放进同一个 chunk。
                 if "</think>" in parts[1]:
                     sub_parts = parts[1].split("</think>", 1)
                     reasoning_content = sub_parts[0]
@@ -185,8 +195,9 @@ class ThinkTagChunkConverter(AbstractReasoningConverter):
         return ReasoningContent(reasoning=reasoning_content, content=normal_content)
 
 
-class GeminiChunkConverter(AbstractReasoningConverter):
-    """Google Gemini 思考转换器 - 处理 reasoning 和 reasoning_details 字段"""
+@register_chunk_parser("reasoning")
+class ReasoningChunkConverter(AbstractReasoningConverter):
+    """通用 reasoning 字段转换器 - 处理 reasoning 和 reasoning_details 字段"""
 
     def __init__(self, model_id: str, logger: logging.Logger):
         super().__init__(model_id, logger)
@@ -196,12 +207,18 @@ class GeminiChunkConverter(AbstractReasoningConverter):
         reasoning = delta.pop("reasoning", None) or ""
         content = delta.get("content") or ""
 
+        # reasoning 模型一旦开始输出正文，后面通常不再返回思考字段，可以切到极速透传路径。
         if content:
             self.think_state = ThinkState.FINISHED
 
         return ReasoningContent(reasoning=reasoning, content=content)
 
 
+ReasoningFieldChunkConverter = ReasoningChunkConverter
+GeminiChunkConverter = ReasoningChunkConverter
+
+
+@register_chunk_parser("reasoning_content")
 class ReasoningContentChunkConverter(AbstractReasoningConverter):
     """通用 Reasoning Content 转换器 - 处理 reasoning_content 字段
 
@@ -216,35 +233,49 @@ class ReasoningContentChunkConverter(AbstractReasoningConverter):
         reasoning = delta.pop("reasoning_content", None) or ""
         content = delta.get("content") or ""
 
+        # reasoning_content 模型与 reasoning 模型一样，正文出现后后续 chunk 通常无需再做字段标准化。
         if content:
             self.think_state = ThinkState.FINISHED
 
         return ReasoningContent(reasoning=reasoning, content=content)
 
 
+def get_supported_chunk_parser_types() -> frozenset[str]:
+    return frozenset(CHUNK_PARSER_REGISTRY)
+
+
 def create_parser(parser_type: str, model_id: str, logger: logging.Logger) -> BaseChunkConverter:
     """根据解析器类型创建解析器实例"""
-    if parser_type == "think_tag":
-        return ThinkTagChunkConverter(model_id, logger)
-    elif parser_type == "reasoning":
-        return GeminiChunkConverter(model_id, logger)
-    else:
-        return ReasoningContentChunkConverter(model_id, logger)
+    parser_cls = CHUNK_PARSER_REGISTRY.get(parser_type, ReasoningContentChunkConverter)
+    return parser_cls(model_id, logger)
 
 
 class ChunkConverterMatcher:
     """解析器匹配器 - 根据模型名称关键词匹配解析器"""
 
-    def __init__(self, parser_config: dict[str, str], logger: logging.Logger):
-        self.parser_config = parser_config
+    def __init__(self, parser_config: dict[str, str | list[str]], logger: logging.Logger):
+        self.parser_rules = self._build_parser_rules(parser_config)
         self.logger = logger
 
     def get_parser(self, model_id: str) -> BaseChunkConverter:
         """根据模型 ID 获取合适的解析器，默认返回 BaseChunkConverter 作为兜底"""
         model_lower = model_id.lower()
 
-        for keyword, parser_type in self.parser_config.items():
-            if keyword != "default" and keyword in model_lower:
+        for keyword, parser_type in self.parser_rules:
+            if keyword in model_lower:
                 return create_parser(parser_type, model_id, self.logger)
 
         return BaseChunkConverter(model_id, self.logger)
+
+    @staticmethod
+    def _build_parser_rules(parser_config: dict[str, str | list[str]]) -> list[tuple[str, str]]:
+        parser_rules = []
+
+        for key, value in parser_config.items():
+            if key == "default":
+                continue
+
+            keywords = [value] if isinstance(value, str) else value
+            parser_rules.extend((keyword.lower(), key) for keyword in keywords)
+
+        return parser_rules

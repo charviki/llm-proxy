@@ -1,5 +1,5 @@
 """配置模型定义 - 使用 Pydantic 进行类型安全配置管理"""
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from typing import Optional
 
 
@@ -51,16 +51,68 @@ class RecordingConfig(BaseModel):
     )
 
 
+class SSECoalescingConfig(BaseModel):
+    """SSE 语义合包配置"""
+    enabled: bool = Field(False, description="是否启用 SSE 语义合包")
+    window_ms: int = Field(20, ge=1, description="语义合包时间窗口（毫秒）")
+    max_buffer_length: int = Field(256, ge=1, description="语义合包长度阈值（字符数）")
+
+
 class AppConfig(BaseModel):
     """应用完整配置"""
     domains: list[str] = Field(
         default_factory=lambda: ["api.openai.com"],
         description="SSL 证书域名列表"
     )
-    chunk_parsers: dict[str, str] = Field(
-        default_factory=lambda: {"default": "reasoning_content"},
-        description="模型关键词到解析器的映射"
+    chunk_parsers: dict[str, str | list[str]] = Field(
+        default_factory=dict,
+        description="Chunk 解析器配置，推荐使用 parser -> keywords 的映射结构"
     )
     backends: BackendsConfig = Field(default_factory=BackendsConfig, description="后端配置")
     server: ServerConfig = Field(..., description="服务器配置")
     recording: RecordingConfig = Field(default_factory=lambda: RecordingConfig(enabled=False), description="流量录制配置")
+    sse_coalescing: SSECoalescingConfig = Field(default_factory=SSECoalescingConfig, description="SSE 语义合包配置")
+
+    @field_validator("chunk_parsers", mode="before")
+    @classmethod
+    def normalize_chunk_parsers(cls, value):
+        from proxy.converter import get_supported_chunk_parser_types
+
+        if value is None:
+            return {}
+        if not isinstance(value, dict):
+            raise TypeError("chunk_parsers 必须是对象映射")
+
+        supported_parser_types = get_supported_chunk_parser_types()
+        normalized: dict[str, str | list[str]] = {}
+
+        for key, raw_value in value.items():
+            if key == "default":
+                if not isinstance(raw_value, str):
+                    raise TypeError("chunk_parsers.default 必须是字符串")
+                if raw_value not in supported_parser_types:
+                    raise ValueError(
+                        f"chunk_parsers.default 使用了不支持的解析器 {raw_value}，"
+                        f"当前支持: {', '.join(sorted(supported_parser_types))}"
+                    )
+                normalized[key] = raw_value
+                continue
+
+            if key not in supported_parser_types:
+                raise ValueError(
+                    f"chunk_parsers.{key} 不是支持的解析器名称，"
+                    f"请使用 parser -> keywords 结构，当前支持: {', '.join(sorted(supported_parser_types))}"
+                )
+
+            keywords = cls._normalize_keywords(raw_value, parser_type=key)
+            if keywords:
+                normalized[key] = keywords
+
+        return normalized
+
+    @staticmethod
+    def _normalize_keywords(raw_value: str | list[str], parser_type: str) -> list[str]:
+        keywords = [raw_value] if isinstance(raw_value, str) else raw_value
+        if not isinstance(keywords, list) or not all(isinstance(keyword, str) for keyword in keywords):
+            raise TypeError(f"chunk_parsers.{parser_type} 必须是字符串或字符串列表")
+        return keywords
