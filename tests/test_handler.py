@@ -700,6 +700,212 @@ async def test_handle_chat_completions_native_stream_passthroughs_non_data_event
 
 
 @pytest.mark.asyncio
+async def test_handle_chat_completions_done_does_not_add_processing_without_delay_config(
+    backends_config,
+    mock_logger,
+    mock_parser_matcher,
+):
+    handler = ProxyHandler(
+        backends_config,
+        mock_logger,
+        mock_parser_matcher,
+        SSECoalescingConfig(enabled=True, window_ms=50, max_buffer_length=128),
+    )
+
+    mock_client = MagicMock()
+    mock_client.stream.return_value = MockStreamContext(
+        MockStreamResponse([
+            'data: {"id":"1","model":"real-model","choices":[{"delta":{"content":"ok"},"finish_reason":null}]}',
+            "",
+            'data: {"id":"1","model":"real-model","choices":[{"delta":{},"finish_reason":"stop"}]}',
+            "",
+            "data: [DONE]",
+            "",
+        ])
+    )
+
+    await handler.set_client(mock_client)
+
+    request = AsyncMock(spec=Request)
+    request.headers = {"Content-Type": "application/json"}
+    request.json = AsyncMock(return_value={"model": "my-model", "messages": [], "stream": True})
+
+    response = await handler.handle_chat_completions(request)
+    body = (await collect_streaming_response(response)).decode("utf-8")
+
+    assert ": PROCESSING" not in body
+    assert body.rstrip().endswith("data: [DONE]")
+
+
+@pytest.mark.asyncio
+async def test_handle_chat_completions_done_adds_processing_when_delay_configured(
+    backends_config,
+    mock_logger,
+    mock_parser_matcher,
+):
+    handler = ProxyHandler(
+        backends_config,
+        mock_logger,
+        mock_parser_matcher,
+        SSECoalescingConfig(enabled=True, window_ms=50, max_buffer_length=128, processing_delay_ms=0),
+    )
+
+    mock_client = MagicMock()
+    mock_client.stream.return_value = MockStreamContext(
+        MockStreamResponse([
+            'data: {"id":"1","model":"real-model","choices":[{"delta":{"content":"ok"},"finish_reason":null}]}',
+            "",
+            'data: {"id":"1","model":"real-model","choices":[{"delta":{},"finish_reason":"stop"}]}',
+            "",
+            "data: [DONE]",
+            "",
+        ])
+    )
+
+    await handler.set_client(mock_client)
+
+    request = AsyncMock(spec=Request)
+    request.headers = {"Content-Type": "application/json"}
+    request.json = AsyncMock(return_value={"model": "my-model", "messages": [], "stream": True})
+
+    response = await handler.handle_chat_completions(request)
+    body = (await collect_streaming_response(response)).decode("utf-8")
+
+    content_index = body.index('"content":"ok"')
+    second_processing = body.index(": PROCESSING", content_index)
+    assert body.count(": PROCESSING") == 6
+    assert body.index(": PROCESSING") < content_index
+    assert content_index < second_processing
+    assert body.rstrip().endswith("data: [DONE]")
+
+
+@pytest.mark.asyncio
+async def test_handle_chat_completions_adds_processing_before_first_content(
+    backends_config,
+    mock_logger,
+    mock_parser_matcher,
+):
+    handler = ProxyHandler(
+        backends_config,
+        mock_logger,
+        mock_parser_matcher,
+        SSECoalescingConfig(enabled=True, window_ms=50, max_buffer_length=128, processing_delay_ms=0),
+    )
+
+    mock_client = MagicMock()
+    mock_client.stream.return_value = MockStreamContext(
+        MockStreamResponse([
+            'data: {"id":"1","model":"real-model","choices":[{"delta":{"content":"正文"},"finish_reason":null}]}',
+            "",
+            'data: {"id":"1","model":"real-model","choices":[{"delta":{},"finish_reason":"stop"}]}',
+            "",
+            "data: [DONE]",
+            "",
+        ])
+    )
+
+    await handler.set_client(mock_client)
+
+    request = AsyncMock(spec=Request)
+    request.headers = {"Content-Type": "application/json"}
+    request.json = AsyncMock(return_value={"model": "my-model", "messages": [], "stream": True})
+
+    response = await handler.handle_chat_completions(request)
+    body = (await collect_streaming_response(response)).decode("utf-8")
+
+    assert body.index(": PROCESSING") < body.index('"content":"正文"')
+
+
+@pytest.mark.asyncio
+async def test_handle_chat_completions_adds_processing_between_reasoning_and_content(
+    backends_config,
+    mock_logger,
+    mock_parser_matcher,
+):
+    handler = ProxyHandler(
+        backends_config,
+        mock_logger,
+        mock_parser_matcher,
+        SSECoalescingConfig(enabled=True, window_ms=50, max_buffer_length=128, processing_delay_ms=0),
+    )
+
+    mock_client = MagicMock()
+    mock_client.stream.return_value = MockStreamContext(
+        MockStreamResponse([
+            'data: {"id":"1","model":"real-model","choices":[{"delta":{"reasoning_content":"思考"},"finish_reason":null}]}',
+            "",
+            'data: {"id":"1","model":"real-model","choices":[{"delta":{"content":"正文"},"finish_reason":null}]}',
+            "",
+            'data: {"id":"1","model":"real-model","choices":[{"delta":{},"finish_reason":"stop"}]}',
+            "",
+            "data: [DONE]",
+            "",
+        ])
+    )
+
+    await handler.set_client(mock_client)
+
+    request = AsyncMock(spec=Request)
+    request.headers = {"Content-Type": "application/json"}
+    request.json = AsyncMock(return_value={"model": "my-model", "messages": [], "stream": True})
+
+    response = await handler.handle_chat_completions(request)
+    body = (await collect_streaming_response(response)).decode("utf-8")
+
+    assert body.index('"reasoning_content":"思考"') < body.index(": PROCESSING")
+    assert body.index(": PROCESSING") < body.index('"content":"正文"')
+
+
+@pytest.mark.asyncio
+async def test_handle_chat_completions_adds_processing_between_content_and_tool_calls(
+    backends_config,
+    mock_logger,
+    mock_parser_matcher,
+):
+    handler = ProxyHandler(
+        backends_config,
+        mock_logger,
+        mock_parser_matcher,
+        SSECoalescingConfig(enabled=True, window_ms=50, max_buffer_length=128, processing_delay_ms=0),
+    )
+
+    mock_client = MagicMock()
+    mock_client.stream.return_value = MockStreamContext(
+        MockStreamResponse([
+            'data: {"id":"1","model":"real-model","choices":[{"delta":{"content":"正文"},"finish_reason":null}]}',
+            "",
+            'data: {"id":"1","model":"real-model","choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"Glob","arguments":"{\\"pattern\\":"}}]},"finish_reason":null}]}',
+            "",
+            'data: {"id":"1","model":"real-model","choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\\"*\\"}"}}]},"finish_reason":null}]}',
+            "",
+            'data: {"id":"1","model":"real-model","choices":[{"delta":{},"finish_reason":"tool_calls"}]}',
+            "",
+            "data: [DONE]",
+            "",
+        ])
+    )
+
+    await handler.set_client(mock_client)
+
+    request = AsyncMock(spec=Request)
+    request.headers = {"Content-Type": "application/json"}
+    request.json = AsyncMock(return_value={"model": "my-model", "messages": [], "stream": True})
+
+    response = await handler.handle_chat_completions(request)
+    body = (await collect_streaming_response(response)).decode("utf-8")
+
+    first_processing = body.index(": PROCESSING")
+    content_index = body.index('"content":"正文"')
+    second_processing = body.index(": PROCESSING", content_index)
+    tool_calls_index = body.index('"tool_calls"')
+
+    assert first_processing < content_index
+    assert content_index < second_processing
+    assert second_processing < tool_calls_index
+    assert body.count(": PROCESSING") >= 2
+
+
+@pytest.mark.asyncio
 async def test_handle_chat_completions_native_stream_supports_multiline_data_event(
     backends_config,
     mock_logger,

@@ -58,6 +58,7 @@ graph TD
    - 如果在实现新功能时发现现有文档缺失，请**就近原则**：在修改的模块同级目录下创建或更新文档。
    - 逻辑更新后必须检查关联的文档是否需要更新。
    - **更新 README.md 后，必须同步更新 README_en.md，确保中英双语文档时刻对齐**。
+   - **新增或修改配置项时，必须同步检查并更新配置样例与运行入口文件**：至少包括 `config.example.yml`、`docker-compose.example.yml`，以及仓库中已存在的实际配置文件（如 `config.yml`、`docker-compose.yml`）。
    - **不要**把所有的技术细节、状态机制、算法实现全部堆砌到本顶层文件中。
 4. **统一的日志记录 (Logger Injection)**：
    - **禁止**在模块内部使用硬编码获取 logger (如 `logging.getLogger("llm_proxy")` 或 `logging.getLogger(__name__)`)。

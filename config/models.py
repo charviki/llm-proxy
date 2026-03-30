@@ -56,6 +56,7 @@ class SSECoalescingConfig(BaseModel):
     enabled: bool = Field(False, description="是否启用 SSE 语义合包")
     window_ms: int = Field(20, ge=1, description="语义合包时间窗口（毫秒）")
     max_buffer_length: int = Field(256, ge=1, description="语义合包长度阈值（字符数）")
+    processing_delay_ms: Optional[int] = Field(None, ge=0, description="发送 PROCESSING 注释后的固定延时（毫秒）")
 
 
 class AppConfig(BaseModel):

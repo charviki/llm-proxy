@@ -31,6 +31,7 @@ def test_load_valid_config(tmp_path):
       enabled: true
       window_ms: 50
       max_buffer_length: 512
+      processing_delay_ms: 1000
     """
     config_file = tmp_path / "config.yml"
     config_file.write_text(config_content, encoding="utf-8")
@@ -51,6 +52,7 @@ def test_load_valid_config(tmp_path):
     assert config.sse_coalescing.enabled is True
     assert config.sse_coalescing.window_ms == 50
     assert config.sse_coalescing.max_buffer_length == 512
+    assert config.sse_coalescing.processing_delay_ms == 1000
 
 
 def test_load_legacy_chunk_parsers_config_is_rejected(tmp_path):
@@ -91,6 +93,7 @@ def test_load_config_uses_default_sse_coalescing(tmp_path):
     assert config.sse_coalescing.enabled is False
     assert config.sse_coalescing.window_ms == 20
     assert config.sse_coalescing.max_buffer_length == 256
+    assert config.sse_coalescing.processing_delay_ms is None
 
 def test_load_missing_file():
     loader = ConfigLoader("non_existent_config.yml")

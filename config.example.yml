@@ -55,10 +55,13 @@ server:
 
 # SSE 语义合包配置（默认关闭）
 # 开启后会在流式输出阶段按时间窗口和长度阈值合并连续增量
+# 如果配置 processing_delay_ms，则会在首次 content / tool_calls / done 前插入 : PROCESSING，
+# 并在发送该注释后按毫秒数固定延时；不配置时不会启用这套逻辑
 sse_coalescing:
   enabled: false # 默认关闭；需要启用时改为 true
   window_ms: 20 # 时间窗口（毫秒）
   max_buffer_length: 256 # 单次 flush 前允许累计的最大字符数
+  # processing_delay_ms: 500 # 可选；None 表示关闭 PROCESSING 逻辑，0 表示只插入不延时
 
 # 流量录制配置（默认关闭）
 # 启用后会实时录制客户端和后端的请求/响应到 recordings/ 目录

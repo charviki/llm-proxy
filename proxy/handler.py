@@ -1,4 +1,5 @@
 """OpenAI 代理处理器 - 核心代理逻辑"""
+import asyncio
 import logging
 import json
 from typing import AsyncGenerator, Optional
@@ -6,7 +7,7 @@ from fastapi import Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 
 from config.models import BackendsConfig, SSECoalescingConfig
-from .backend_client import BackendClient, UpstreamBodyChunk, UpstreamResponse, UpstreamStreamItem
+from .backend_client import BackendClient, UpstreamBodyChunk, UpstreamResponse, UpstreamStreamItem, UpstreamSSEEvent
 from .converter import ChunkConverterMatcher
 from .models import ModelsManager, Backend
 from .response_assembler import (
@@ -14,7 +15,7 @@ from .response_assembler import (
     assemble_completion_response,
 )
 from .sse_coalescer import SSESemanticCoalescer
-from .stream_processor import StreamEventProcessor
+from .stream_processor import PROCESSING_MARKER, StreamEventProcessor
 
 # 标准 SSE 响应头，防止中间层缓冲
 _SSE_HEADERS = {
@@ -22,6 +23,8 @@ _SSE_HEADERS = {
     "X-Accel-Buffering": "no",
     "Connection": "keep-alive",
 }
+# 对客户端可见的 SSE 注释行；内部 mask 直接复用这份字节值。
+_PROCESSING_COMMENT = PROCESSING_MARKER
 
 
 class ProxyHandler:
@@ -166,21 +169,33 @@ class ProxyHandler:
         custom_model_id: str,
     ) -> StreamingResponse:
         async def stream_generator():
+            processing_delay_ms = self.sse_coalescing_config.processing_delay_ms
             converter = self.parser_matcher.get_parser(custom_model_id)
             coalescer = None
             if endpoint == "chat/completions":
-                # 仅 chat/completions 走语义合包；其他端点维持更保守的原始输出语义。
                 coalescer = SSESemanticCoalescer(self.sse_coalescing_config)
-            processor = StreamEventProcessor(coalescer=coalescer)
+            processor = StreamEventProcessor(
+                coalescer=coalescer,
+                processing_enabled=processing_delay_ms is not None,
+            )
             async for upstream_event in upstream_events:
                 if isinstance(upstream_event, UpstreamBodyChunk):
-                    # 遇到非 SSE 原始字节块前必须先 flush，避免缓冲中的语义 chunk 被后续裸字节打断顺序。
                     for chunk in processor.flush_pending():
                         yield chunk
                     yield upstream_event.body_bytes
                     continue
 
-                for output in processor.process_event(upstream_event, converter):
+                outputs = processor.process_event(upstream_event, converter)
+                for output in outputs:
+                    if output == _PROCESSING_COMMENT:
+                        # 只有配置了 processing_delay_ms 时，stream_processor 才会产出该哨兵。
+                        yield _PROCESSING_COMMENT
+                        yield _PROCESSING_COMMENT
+                        yield _PROCESSING_COMMENT
+                        if processing_delay_ms and processing_delay_ms > 0:
+                            # 注释先发给客户端，再执行固定延时，制造可感知的阶段过渡。
+                            await asyncio.sleep(processing_delay_ms / 1000)
+                        continue
                     yield output
 
             for chunk in processor.flush_pending():
