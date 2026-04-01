@@ -173,3 +173,20 @@ The recommended approach is:
 3. Choose any forwarding or listening strategy that fits your local network environment.
 
 For example, you can try `127.0.0.2`, `127.0.0.3`, or another loopback address; the important rule is that **the proxy listen address, certificate trust environment, and hosts target must stay aligned**.
+
+### Circumventing Streaming Output Anomalies (Out-of-Order/Premature Termination) in Trae IDE with Windows + WSL
+
+In a mixed **Trae + Windows + WSL** development environment, when network requests are initiated from WSL, high-frequency streaming data can accumulate at the network layer due to the characteristics of the WSL network stack (based on Hyper-V virtual machine translation). This causes **multiple Server-Sent Events (SSE) message blocks to accumulate in the TCP receive buffer (i.e., TCP packet sticking)**, which are then read by the application layer all at once.
+
+Since the Trae client's current SSE streaming parsing logic has certain vulnerabilities when dealing with this underlying packet sticking phenomenon (e.g., message boundary recognition errors), it often leads to **out-of-order text generation** or misjudgment of connection errors, resulting in **premature and abnormal session termination**.
+
+**Engineering Workaround**:
+If you encounter this issue in such an environment, you can use the **server-side semantic coalescing and delayed transmission** feature of `llm-proxy` as an effective engineering workaround. You need to enable `sse_coalescing` in your `config.yml` and add the `processing_delay_ms` parameter (e.g., set to 50~500 milliseconds). This forces the proxy to reduce the number of SSE messages on the server side (lowering the probability of network micro-bursts) and insert physical buffering delays at critical nodes, thereby alleviating the pressure on the fragile client parser:
+
+```yaml
+sse_coalescing:
+  enabled: true
+  window_ms: 20
+  max_buffer_length: 256
+  processing_delay_ms: 50  # Recommended setting to force semantic coalescing and insert physical delay on the server side, circumventing Trae's parsing issues with packet sticking
+```

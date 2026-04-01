@@ -62,6 +62,10 @@ sse_coalescing:
   window_ms: 20 # 时间窗口（毫秒）
   max_buffer_length: 256 # 单次 flush 前允许累计的最大字符数
   # processing_delay_ms: 500 # 可选；None 表示关闭 PROCESSING 逻辑，0 表示只插入不延时
+  # 💡 特别提示：在 Trae + Windows + WSL 的开发环境中，如果请求从 WSL 发出，网络层（由于 Hyper-V 转换等）可能会出现数据堆积。
+  # 这会导致 TCP 接收缓冲区中积累了多个 SSE 消息块（即发生粘包），并被应用层一次性读取。
+  # 由于 Trae 客户端目前的 SSE 流式解析逻辑在应对底层粘包时存在一定的脆弱性，可能会引发内容乱序或对话提前异常终止。
+  # 此时建议开启 enabled: true 并设置 processing_delay_ms (如 50 毫秒) 在服务端强制进行语义合包和插入物理延时，从而作为工程规避手段有效缓解/解决该问题。
 
 # 流量录制配置（默认关闭）
 # 启用后会实时录制客户端和后端的请求/响应到 recordings/ 目录

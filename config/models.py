@@ -61,10 +61,6 @@ class SSECoalescingConfig(BaseModel):
 
 class AppConfig(BaseModel):
     """应用完整配置"""
-    domains: list[str] = Field(
-        default_factory=lambda: ["api.openai.com"],
-        description="SSL 证书域名列表"
-    )
     chunk_parsers: dict[str, str | list[str]] = Field(
         default_factory=dict,
         description="Chunk 解析器配置，推荐使用 parser -> keywords 的映射结构"

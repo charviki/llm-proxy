@@ -60,14 +60,13 @@ class RecordingMiddleware:
                 body_bytes = b""
 
             body_sent = False
-            original_receive = receive
 
             async def replay_receive() -> dict:
                 nonlocal body_sent
                 if not body_sent:
                     body_sent = True
                     return {"type": "http.request", "body": body_bytes, "more_body": False}
-                return await original_receive()
+                return await receive()
 
             prefix, suffix = generate_prefix(request.url.path)
             
