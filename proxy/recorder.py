@@ -48,6 +48,23 @@ def ensure_recordings_dir() -> Path:
     return RECORDINGS_DIR
 
 
+def mask_headers(headers: Optional[dict]) -> dict:
+    """对 Header 中的敏感 Token 进行脱敏处理"""
+    if not headers:
+        return {}
+    masked = {}
+    sensitive_keys = {"authorization", "api-key", "x-api-key"}
+    for k, v in headers.items():
+        if k.lower() in sensitive_keys:
+            if k.lower() == "authorization" and str(v).lower().startswith("bearer "):
+                masked[k] = "Bearer ***"
+            else:
+                masked[k] = "***"
+        else:
+            masked[k] = v
+    return masked
+
+
 def write_request(prefix: str, suffix: str, request_type: str, endpoint: str, method: str,
                    url: str, headers: dict, body: dict) -> None:
     """写入请求录制文件
@@ -67,7 +84,7 @@ def write_request(prefix: str, suffix: str, request_type: str, endpoint: str, me
         "endpoint": endpoint,
         "method": method,
         "url": url,
-        "headers": dict(headers),
+        "headers": mask_headers(headers),
         "body": body,
         "error": None
     }
@@ -94,7 +111,7 @@ def write_response(prefix: str, suffix: str, response_type: str, status_code: in
         "error": error
     }
     if headers is not None:
-        data["headers"] = dict(headers)
+        data["headers"] = mask_headers(headers)
     if chunks is not None:
         data["chunks"] = chunks
     else:

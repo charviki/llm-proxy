@@ -29,29 +29,19 @@ class TeeAsyncByteStream(httpx.AsyncByteStream):
     async def __aiter__(self) -> typing.AsyncIterator[bytes]:
         self._iteration_started = True
         self._iteration_count += 1
-        if self.logger:
-            self.logger.debug(f"[TeeStream] Starting iteration #{self._iteration_count}")
         try:
             async for chunk in self.original_stream:
                 self.chunks.append(chunk)
-                if self.logger:
-                    self.logger.debug(f"[TeeStream] iteration #{self._iteration_count} yielded {len(chunk)} bytes")
                 yield chunk
-            if self.logger:
-                self.logger.debug(f"[TeeStream] iteration #{self._iteration_count} completed, total chunks: {len(self.chunks)}")
         except Exception as e:
             if self.logger:
                 self.logger.error(f"[TeeStream] iteration #{self._iteration_count} error: {e}")
             raise
 
     async def aclose(self) -> None:
-        if self.logger:
-            self.logger.debug(f"[TeeStream] aclose() called, chunks collected: {len(self.chunks)}")
         await self.original_stream.aclose()
         try:
             self.on_close(self.chunks)
-            if self.logger:
-                self.logger.debug(f"[TeeStream] on_close callback completed")
         except Exception as e:
             if self.logger:
                 self.logger.error(f"[TeeStream] on_close callback error: {e}")
@@ -77,14 +67,12 @@ class TransportRecordingMiddleware(Middleware):
 
         recording_ctx = get_recording_context()
         if not recording_ctx:
-            self.logger.debug("[Recording] __call__: no recording context")
             return await next_handler()
 
         prefix = recording_ctx.get("prefix")
         suffix = recording_ctx.get("suffix")
 
         if not prefix or not suffix:
-            self.logger.debug(f"[Recording] __call__: missing prefix or suffix, prefix={prefix}, suffix={suffix}")
             return await next_handler()
 
         self.logger.info(f"[Recording] __call__: {request.method} {request.url}")
@@ -190,7 +178,7 @@ class TransportRecordingMiddleware(Middleware):
 
         except RuntimeError as e:
             if "sync iterator" in str(e) or "async stream" in str(e):
-                self.logger.debug(f"录制拦截器跳过流式响应读取: {e}")
+                pass
             else:
                 self.logger.warning(f"录制拦截器处理响应失败: {e}")
         except Exception as e:

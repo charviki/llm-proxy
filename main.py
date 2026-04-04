@@ -57,7 +57,7 @@ def main() -> None:
         print(f"错误: 配置加载失败 - {e}", file=sys.stderr)
         sys.exit(1)
 
-    log_level = logging.DEBUG if config.server.debug else logging.INFO
+    log_level = getattr(logging, config.logger.level.upper(), logging.INFO)
 
     # 移除所有 uvicorn 相关的 logger 的 handler
     for name in logging.root.manager.loggerDict:
@@ -98,7 +98,7 @@ def main() -> None:
     for group in config.backends.groups:
         logger.info(f"  - Group: {group.name} (prefix: {group.model_prefix})")
 
-    logger.info(f"调试模式: {'开启' if config.server.debug else '关闭'}")
+    logger.info(f"日志级别: {config.logger.level}")
 
     uvicorn_kwargs = {
         "host": "0.0.0.0",

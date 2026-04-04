@@ -79,9 +79,6 @@ class ProxyHandler:
                 self.logger.exception(f"[{endpoint}] JSON解析失败: {str(e)}")
                 return JSONResponse(status_code=400, content={"error": f"JSON解析失败: {str(e)}"})
 
-            self.logger.debug(f"[{endpoint}] 请求头: {dict(request.headers)}")
-            self.logger.debug(f"[{endpoint}] 请求体: {json.dumps(req_json, ensure_ascii=False)}")
-
             requested_model = req_json.get('model', '')
             backend = self.select_backend(requested_model)
 
@@ -112,7 +109,7 @@ class ProxyHandler:
                 headers["Authorization"] = f"Bearer {backend.api_key}"
 
             target_url = f"{target_api_url}/v1/{endpoint}"
-            self.logger.debug(f"[{endpoint}] 转发请求到: {target_url} (stream: {is_backend_stream})")
+            self.logger.info(f"[{endpoint}] 转发请求到: {target_url} (stream: {is_backend_stream})")
             upstream_response = await self._backend_client.request(
                 req_json=req_json,
                 headers=headers,

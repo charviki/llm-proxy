@@ -160,7 +160,6 @@ class BackendClient:
                 body={"error": f"上游服务返回了非JSON格式的响应，状态码: {response.status_code}, 响应: {response.text[:100]}..."},
             )
 
-        self.logger.debug(f"[{endpoint}] 响应体: {json.dumps(response_json, ensure_ascii=False)}")
         return UpstreamResponse.stream(
             events=self._simulate_upstream_events(
                 response_json=response_json,
@@ -246,13 +245,9 @@ class BackendClient:
         endpoint: str,
     ) -> AsyncGenerator[UpstreamStreamItem, None]:
         """把原生 SSE 按事件边界拆成统一事件流。"""
-        full_response_chunks = []
         try:
-            is_debug = self.logger.isEnabledFor(logging.DEBUG)
             pending_event_lines: list[str] = []
             async for line in response.aiter_lines():
-                if is_debug:
-                    full_response_chunks.append(line.encode("utf-8") + b"\n")
                 if line:
                     pending_event_lines.append(line)
                     continue
@@ -263,16 +258,7 @@ class BackendClient:
             if pending_event_lines:
                 yield UpstreamSSEEvent(event_lines=pending_event_lines)
         finally:
-            try:
-                await response_cm.__aexit__(None, None, None)
-            finally:
-                if full_response_chunks:
-                    try:
-                        full_response_bytes = b"".join(full_response_chunks)
-                        full_response_str = full_response_bytes.decode("utf-8", errors="replace")
-                        self.logger.debug(f"[{endpoint}] 完整流式响应内容:\n{full_response_str}")
-                    except Exception as e:
-                        self.logger.warning(f"[{endpoint}] 记录完整流式响应失败: {e}")
+            await response_cm.__aexit__(None, None, None)
 
     async def _simulate_upstream_events(
         self,

@@ -26,7 +26,8 @@ def test_load_valid_config(tmp_path):
       domains:
         - api.example.com
       port: 8443
-      debug: true
+    logger:
+      level: "DEBUG"
     sse_coalescing:
       enabled: true
       window_ms: 50
@@ -41,7 +42,7 @@ def test_load_valid_config(tmp_path):
 
     assert isinstance(config, AppConfig)
     assert config.server.port == 8443
-    assert config.server.debug is True
+    assert config.logger.level == "DEBUG"
     assert len(config.backends.apis) == 1
     assert config.backends.apis[0].name == "Test API"
     assert config.chunk_parsers == {
@@ -66,7 +67,8 @@ def test_load_legacy_chunk_parsers_config_is_rejected(tmp_path):
       domains:
         - api.example.com
       port: 443
-      debug: false
+    logger:
+      level: "INFO"
     """
     config_file = tmp_path / "config_legacy_chunk_parsers.yml"
     config_file.write_text(config_content, encoding="utf-8")
@@ -82,7 +84,8 @@ def test_load_config_uses_default_sse_coalescing(tmp_path):
       domains:
         - api.example.com
       port: 443
-      debug: false
+    logger:
+      level: "INFO"
     """
     config_file = tmp_path / "config_default_sse.yml"
     config_file.write_text(config_content, encoding="utf-8")
@@ -113,9 +116,10 @@ def test_load_invalid_cert_files(tmp_path):
     server:
       domains: ["api.example.com"]
       port: 443
-      debug: false
       cert_file: "/non/existent/cert.crt"
       key_file: "/non/existent/key.key"
+    logger:
+      level: "INFO"
     """
     config_file = tmp_path / "config_cert.yml"
     config_file.write_text(config_content, encoding="utf-8")

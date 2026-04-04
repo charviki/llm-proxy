@@ -37,7 +37,6 @@ class ServerConfig(BaseModel):
         description="SSL 证书域名列表"
     )
     port: int = Field(443, description="监听端口")
-    debug: bool = Field(False, description="调试模式")
     cert_file: Optional[str] = Field(None, description="SSL 证书路径")
     key_file: Optional[str] = Field(None, description="SSL 私钥路径")
 
@@ -59,8 +58,14 @@ class SSECoalescingConfig(BaseModel):
     processing_delay_ms: Optional[int] = Field(None, ge=0, description="发送 PROCESSING 注释后的固定延时（毫秒）")
 
 
+class LoggerConfig(BaseModel):
+    """日志配置"""
+    level: str = Field("INFO", description="日志级别")
+
+
 class AppConfig(BaseModel):
     """应用完整配置"""
+    logger: LoggerConfig = Field(default_factory=LoggerConfig, description="日志配置")
     chunk_parsers: dict[str, str | list[str]] = Field(
         default_factory=dict,
         description="Chunk 解析器配置，推荐使用 parser -> keywords 的映射结构"

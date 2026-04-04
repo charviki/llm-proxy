@@ -1,6 +1,9 @@
 # LLM-Proxy 配置文件示例
 # 请将此文件复制为 config.yml 并根据实际情况修改配置
 
+logger:
+  level: "INFO" # 日志级别，如 INFO, DEBUG, WARNING
+
 # 思考解析器配置（解析器类型 -> custom_model_id 匹配关键词列表）
 # 当客户端请求的 custom_model_id 中包含以下关键词时，将使用对应的解析器
 # 支持的解析器类型:
@@ -49,7 +52,6 @@ server:
   domains:
     - api.example.com # 代理服务器拦截的域名列表 (请替换为需要代理的域名)
   port: 443 # 代理服务器监听端口
-  debug: true # 是否开启 debug 模式
   cert_file: "ca/llm-proxy.crt" # 证书文件路径
   key_file: "ca/llm-proxy.key" # 私钥文件路径
 
