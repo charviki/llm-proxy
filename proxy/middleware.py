@@ -2,6 +2,7 @@
 import json
 import time
 import logging
+import fnmatch
 from typing import Callable
 from fastapi import Request
 
@@ -41,13 +42,16 @@ class RecordingMiddleware:
                 set_replay_id(replay_id)
             
             # 验证是否在配置的录制路径中
-            record_paths = self.config.recording.record_paths if self.config else ["/v1/chat/completions"]
+            record_paths = self.config.recording.record_paths
+            
+            # 检查当前请求路径是否匹配配置中的任意一个通配符模式
+            is_path_matched = any(fnmatch.fnmatch(request.url.path, pattern) for pattern in record_paths)
             
             # 如果有 replay_id，跳过录制
-            if replay_id and request.url.path in record_paths:
+            if replay_id and is_path_matched:
                 return await self.app(scope, receive, send)
             
-            if request.url.path not in record_paths:
+            if not is_path_matched:
                 return await self.app(scope, receive, send)
 
             # --- 1. 读取并录制客户端请求 ---

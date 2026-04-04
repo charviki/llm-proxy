@@ -71,8 +71,8 @@ sse_coalescing:
 
 # 流量录制配置（默认关闭）
 # 启用后会实时录制客户端和后端的请求/响应到 recordings/ 目录
-# recording:
-#   enabled: true
-#   # 需要录制的请求路径列表，默认只录制 /v1/chat/completions
-#   record_paths:
-#     - "/v1/chat/completions"
+recording:
+  enabled: true
+  # 需要录制的请求路径列表，默认只录制 /v1/chat/completions
+  record_paths:
+    - "*"
