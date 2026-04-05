@@ -7,30 +7,7 @@ from proxy.handler import ProxyHandler
 from proxy.converter import ChunkConverterMatcher
 from config.models import BackendsConfig, APIConfig, SSECoalescingConfig
 
-
-class MockStreamResponse:
-    def __init__(self, lines: list[str], status_code: int = 200, read_bytes: bytes = b""):
-        self._lines = lines
-        self.status_code = status_code
-        self._read_bytes = read_bytes
-
-    async def aiter_lines(self):
-        for line in self._lines:
-            yield line
-
-    async def aread(self):
-        return self._read_bytes
-
-
-class MockStreamContext:
-    def __init__(self, response: MockStreamResponse):
-        self.response = response
-
-    async def __aenter__(self):
-        return self.response
-
-    async def __aexit__(self, exc_type, exc, tb):
-        return False
+from conftest import MockStreamResponse, MockStreamContext
 
 
 async def collect_streaming_response(response) -> bytes:
@@ -76,7 +53,7 @@ async def test_handle_completions_invalid_json(backends_config, mock_logger, moc
     response = await handler.handle_chat_completions(request)
     assert response.status_code == 400
     res_content = json.loads(response.body)
-    assert "JSON解析失败" in res_content["error"]
+    assert "JSON解析失败" in res_content["error"]["message"]
 
 @pytest.mark.asyncio
 async def test_handle_chat_completions_model_not_found(backends_config, mock_logger, mock_parser_matcher):
@@ -92,7 +69,7 @@ async def test_handle_chat_completions_model_not_found(backends_config, mock_log
     response = await handler.handle_chat_completions(request)
     assert response.status_code == 400
     res_content = json.loads(response.body)
-    assert "未找到匹配的模型" in res_content["error"]
+    assert "未找到匹配的模型" in res_content["error"]["message"]
 
 @pytest.mark.asyncio
 async def test_handle_chat_completions_non_stream(backends_config, mock_logger, mock_parser_matcher):
@@ -236,6 +213,49 @@ async def test_handle_completions_stream_simulation(backends_config, mock_logger
     assert '"text":"Hello world"' in body
     assert '"finish_reason":"stop"' in body
     assert body.rstrip().endswith("data: [DONE]")
+
+
+@pytest.mark.asyncio
+async def test_handle_chat_completions_missing_model(backends_config, mock_logger, mock_parser_matcher):
+    handler = ProxyHandler(backends_config, mock_logger, mock_parser_matcher)
+    await handler.set_client(AsyncMock())
+
+    request = AsyncMock(spec=Request)
+    request.headers = {"Content-Type": "application/json"}
+    request.json = AsyncMock(return_value={"messages": []})
+
+    response = await handler.handle_chat_completions(request)
+    assert response.status_code == 400
+    res_content = json.loads(response.body)
+    assert "未找到匹配的模型" in res_content["error"]["message"]
+
+
+@pytest.mark.asyncio
+async def test_handle_chat_completions_wrong_content_type(backends_config, mock_logger, mock_parser_matcher):
+    handler = ProxyHandler(backends_config, mock_logger, mock_parser_matcher)
+
+    request = AsyncMock(spec=Request)
+    request.headers = {"Content-Type": "text/plain"}
+    request.json = AsyncMock(return_value={"model": "my-model"})
+
+    response = await handler.handle_chat_completions(request)
+    assert response.status_code == 400
+    res_content = json.loads(response.body)
+    assert "Content-Type" in res_content["error"]["message"]
+
+
+@pytest.mark.asyncio
+async def test_handle_chat_completions_null_json_body(backends_config, mock_logger, mock_parser_matcher):
+    handler = ProxyHandler(backends_config, mock_logger, mock_parser_matcher)
+
+    request = AsyncMock(spec=Request)
+    request.headers = {"Content-Type": "application/json"}
+    request.json = AsyncMock(return_value=None)
+
+    response = await handler.handle_chat_completions(request)
+    assert response.status_code == 400
+    res_content = json.loads(response.body)
+    assert "无效的JSON请求体" in res_content["error"]["message"]
 
 
 # ===== 新增：tool_calls 相关测试 =====

@@ -27,6 +27,14 @@ _SSE_HEADERS = {
 _PROCESSING_COMMENT = PROCESSING_MARKER
 
 
+def _make_error_response(status_code: int, message: str, error_type: str = "invalid_request_error", code: str = None) -> JSONResponse:
+    """生成符合 OpenAI 标准的错误响应格式"""
+    error_obj = {"message": message, "type": error_type}
+    if code is not None:
+        error_obj["code"] = code
+    return JSONResponse(status_code=status_code, content={"error": error_obj})
+
+
 class ProxyHandler:
     """OpenAI 代理处理器"""
 
@@ -69,22 +77,22 @@ class ProxyHandler:
         try:
             content_type = request.headers.get('Content-Type', '')
             if 'application/json' not in content_type:
-                return JSONResponse(status_code=400, content={"error": "Content-Type必须为application/json"})
+                return _make_error_response(400, "Content-Type必须为application/json")
 
             try:
                 req_json = await request.json()
                 if req_json is None:
-                    return JSONResponse(status_code=400, content={"error": "无效的JSON请求体"})
+                    return _make_error_response(400, "无效的JSON请求体")
             except Exception as e:
                 self.logger.exception(f"[{endpoint}] JSON解析失败: {str(e)}")
-                return JSONResponse(status_code=400, content={"error": f"JSON解析失败: {str(e)}"})
+                return _make_error_response(400, f"JSON解析失败: {str(e)}")
 
             requested_model = req_json.get('model', '')
             backend = self.select_backend(requested_model)
 
             if not backend:
                 self.logger.error(f"未找到匹配的模型: {requested_model}")
-                return JSONResponse(status_code=400, content={"error": f"未找到匹配的模型: {requested_model}"})
+                return _make_error_response(400, f"未找到匹配的模型: {requested_model}")
 
             target_api_url = backend.endpoint.rstrip('/')
             target_model_id = backend.target_model_id.strip()
@@ -95,10 +103,8 @@ class ProxyHandler:
                 req_json['model'] = target_model_id
                 self.logger.debug(f"[{endpoint}] 模型ID从 {original_model} 修改为 {target_model_id}")
 
-            # 客户端是否请求了流式输出
             original_stream = req_json.get('stream', False)
 
-            # 综合判断：只有当客户端请求流式，且后端也支持流式时，才向后端发送流式请求
             is_backend_stream = original_stream and backend.stream
 
             if 'stream' in req_json:
@@ -128,7 +134,7 @@ class ProxyHandler:
 
         except Exception as e:
             self.logger.exception(f"[{endpoint}] 处理请求时发生内部错误: {str(e)}")
-            return JSONResponse(status_code=500, content={"error": f"内部服务器错误: {str(e)}"})
+            return _make_error_response(500, f"内部服务器错误: {str(e)}", error_type="server_error", code="internal_error")
 
     async def _build_response(
         self,

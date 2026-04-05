@@ -44,7 +44,7 @@ async def test_assemble_chat_completion_response():
 
 @pytest.mark.asyncio
 async def test_assemble_completion_response():
-    matcher = ChunkConverterMatcher({"default": "reasoning_content"}, logging.getLogger("test_logger"))
+    matcher = ChunkConverterMatcher({}, logging.getLogger("test_logger"))
     converter = matcher.get_parser("my-model")
     events = [
         UpstreamSSEEvent(event_lines=['data: {"id":"1","model":"real-model","choices":[{"text":"hel","finish_reason":null}]}']),

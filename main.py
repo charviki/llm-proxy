@@ -10,7 +10,7 @@ from config import ConfigLoader
 from proxy import ProxyHandler, ChunkConverterMatcher, RecordingMiddleware, ProxyTransport, TransportRecordingMiddleware, ReplayMiddleware
 from routes import register_routes
 
-logger = logging.getLogger('llm-roxy')
+logger = logging.getLogger('llm-proxy')
 
 proxy_handler: ProxyHandler
 config = None

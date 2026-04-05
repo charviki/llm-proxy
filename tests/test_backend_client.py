@@ -3,33 +3,10 @@ import logging
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+import httpx
 
 from proxy.backend_client import BackendClient, UpstreamSSEEvent
-
-
-class MockStreamResponse:
-    def __init__(self, lines: list[str], status_code: int = 200, read_bytes: bytes = b""):
-        self._lines = lines
-        self.status_code = status_code
-        self._read_bytes = read_bytes
-
-    async def aiter_lines(self):
-        for line in self._lines:
-            yield line
-
-    async def aread(self):
-        return self._read_bytes
-
-
-class MockStreamContext:
-    def __init__(self, response: MockStreamResponse):
-        self.response = response
-
-    async def __aenter__(self):
-        return self.response
-
-    async def __aexit__(self, exc_type, exc, tb):
-        return False
+from conftest import MockStreamResponse, MockStreamContext
 
 
 async def _collect_events(events):
@@ -90,3 +67,71 @@ async def test_backend_client_chat_simulation_emits_error_event_on_invalid_json_
     assert data_content is not None
     payload = json.loads(data_content)
     assert payload["error"]["code"] == "proxy_stream_simulation_error"
+
+
+@pytest.mark.asyncio
+async def test_backend_client_non_stream_500_response():
+    client = AsyncMock()
+    mock_response = MagicMock()
+    mock_response.status_code = 500
+    mock_response.json.return_value = {"error": {"message": "internal server error"}}
+    client.post.return_value = mock_response
+    backend_client = BackendClient(client, logging.getLogger("test_logger"))
+
+    response = await backend_client.request(
+        req_json={"model": "test"},
+        headers={},
+        target_url="https://api.test.com/v1/chat/completions",
+        endpoint="chat/completions",
+        requested_model_id="test",
+        client_requested_stream=False,
+        backend_supports_stream=False,
+    )
+
+    assert response.status_code == 500
+    assert response.json_body["error"]["message"] == "internal server error"
+
+
+@pytest.mark.asyncio
+async def test_backend_client_non_stream_non_json_response():
+    client = AsyncMock()
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.side_effect = ValueError("not json")
+    mock_response.text = "<html>error</html>"
+    client.post.return_value = mock_response
+    backend_client = BackendClient(client, logging.getLogger("test_logger"))
+
+    response = await backend_client.request(
+        req_json={"model": "test"},
+        headers={},
+        target_url="https://api.test.com/v1/chat/completions",
+        endpoint="chat/completions",
+        requested_model_id="test",
+        client_requested_stream=False,
+        backend_supports_stream=False,
+    )
+
+    assert response.status_code == 502
+
+
+@pytest.mark.asyncio
+async def test_backend_client_stream_non_200_non_json_body():
+    client = MagicMock()
+    client.stream.return_value = MockStreamContext(
+        MockStreamResponse(lines=[], status_code=429, read_bytes=b'Rate limit exceeded')
+    )
+    backend_client = BackendClient(client, logging.getLogger("test_logger"))
+
+    response = await backend_client.request(
+        req_json={"stream": True},
+        headers={},
+        target_url="https://api.test.com/v1/chat/completions",
+        endpoint="chat/completions",
+        requested_model_id="my-model",
+        client_requested_stream=True,
+        backend_supports_stream=True,
+    )
+
+    assert response.status_code == 429
+    assert response.text_body == "Rate limit exceeded"
