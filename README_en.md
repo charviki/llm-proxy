@@ -129,7 +129,7 @@ For the proxy to take effect, you **MUST** complete the following two configurat
 
 Locate the `ca/llm-proxy-ca.crt` file (this is the root CA certificate) generated in the previous steps and install it into your system's Trusted Root Certification Authorities.
 
-> **💡 Important Note for Windows + WSL Users**: If your IDE runs on Windows but connects to WSL (e.g., Ubuntu) for remote development, the underlying network requests from the IDE are very likely sent directly from the WSL environment. Therefore, you **MUST install and trust the certificate on BOTH the Windows host and the WSL subsystem**. Additionally, unless your WSL is configured to share DNS/Hosts with the Windows host, you must **modify the hosts file on both sides**!
+> **💡 Important Note for Windows + WSL Users**: If you need to access target domains through the proxy on **both** Windows and WSL (e.g., both a Windows application and a WSL-based IDE remote development environment need the proxy), then you **MUST install and trust the certificate on BOTH the Windows host and the WSL subsystem**. Additionally, unless your WSL is configured to share DNS/Hosts with the Windows host, you must **modify the hosts file on both sides**. If you only need the proxy on one side, simply install the certificate and configure hosts on that side only.
 
 - **macOS**:
   Double-click `llm-proxy-ca.crt`, find it in "Keychain Access", right-click -> Get Info -> expand "Trust" -> change "When using this certificate" to **Always Trust**.
