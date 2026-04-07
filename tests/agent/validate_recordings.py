@@ -5,6 +5,8 @@ from pathlib import Path
 from typing import Optional
 from dataclasses import dataclass
 
+from tests.helpers.response_parsing import normalize_text, parse_nonstream_body, parse_sse_chunks
+
 
 @dataclass
 class ValidationResult:
@@ -139,6 +141,8 @@ def validate_streaming_response(recording: dict) -> ValidationResult:
 
     client_response = recording.get("client_response")
     backend_response = recording.get("backend_response")
+    backend_headers = backend_response.get("headers", {}) if backend_response else {}
+    client_headers = client_response.get("headers", {}) if client_response else {}
 
     if not client_response or not backend_response:
         return ValidationResult(
@@ -172,28 +176,41 @@ def validate_streaming_response(recording: dict) -> ValidationResult:
     if not has_done:
         warnings.append("后端响应缺少 [DONE] 消息")
 
-    # 提取 content 并对比
-    backend_content, content_errors = extract_content_from_chunks(backend_chunks)
-    errors.extend([f"content 提取: {e}" for e in content_errors])
+    if not backend_headers.get("content-type"):
+        warnings.append("后端响应缺少 content-type header")
+    if client_headers and not client_headers.get("content-type"):
+        warnings.append("客户端响应缺少 content-type header")
 
-    client_content = None
-    if client_chunks:
-        client_content, _ = extract_content_from_chunks(client_chunks)
+    backend_parsed = parse_sse_chunks(backend_chunks)
+    client_parsed = parse_sse_chunks(client_chunks) if client_chunks else None
 
-    if backend_content is not None and client_content is not None:
-        if backend_content != client_content:
-            errors.append(f"content 内容不一致:\n  后端: {backend_content[:100]}...\n  客户端: {client_content[:100]}...")
-    elif backend_content is not None and client_content is None:
-        warnings.append("后端有 content 但客户端响应没有 chunks")
-    elif backend_content is None and client_content is not None:
-        errors.append("后端没有提取到 content，但客户端有")
+    if backend_parsed["content"] and client_parsed and normalize_text(backend_parsed["content"]) != normalize_text(client_parsed["content"]):
+        errors.append(
+            f"content 内容不一致:\n  后端: {normalize_text(backend_parsed['content'])[:100]}...\n  客户端: {normalize_text(client_parsed['content'])[:100]}..."
+        )
 
-    # 提取 reasoning_content
-    backend_reasoning, _ = extract_reasoning_from_chunks(backend_chunks)
-    client_reasoning, _ = extract_reasoning_from_chunks(client_chunks)
+    if backend_parsed["reasoning_content"] and client_parsed and normalize_text(backend_parsed["reasoning_content"]) != normalize_text(client_parsed["reasoning_content"]):
+        warnings.append("reasoning_content 与客户端响应不一致（可能被转换器重写）")
 
-    if backend_reasoning and not client_reasoning:
-        warnings.append("后端有 reasoning_content 但客户端响应没有")
+    if backend_parsed["tool_calls"] and client_parsed and len(backend_parsed["tool_calls"]) != len(client_parsed["tool_calls"]):
+        errors.append("tool_calls 数量不一致")
+
+    for tool_call in backend_parsed["tool_calls"]:
+        if not tool_call["function"]["name"]:
+            errors.append("存在缺少 function.name 的 tool_call")
+        if tool_call["function"]["arguments"] is None:
+            errors.append("存在缺少 function.arguments 的 tool_call")
+
+    valid_finish_reasons = {"stop", "tool_calls", "length", "content_filter", "function_call"}
+    for finish_reason in backend_parsed["finish_reasons"]:
+        if finish_reason not in valid_finish_reasons:
+            warnings.append(f"发现未知 finish_reason: {finish_reason}")
+
+    if backend_parsed["non_data_lines"]:
+        warnings.append(f"后端包含 {len(backend_parsed['non_data_lines'])} 条非 data 注释/元数据行")
+
+    if backend_chunks and "[DONE]" not in backend_chunks[-1]:
+        warnings.append("[DONE] 不在流式响应尾部")
 
     # 检查 chunks 数量
     if client_chunks and len(client_chunks) < len(backend_chunks):
@@ -235,42 +252,44 @@ def validate_non_streaming_response(recording: dict) -> ValidationResult:
 
     client_body = client_response.get("body")
     backend_body = backend_response.get("body")
+    backend_headers = backend_response.get("headers", {})
+    client_headers = client_response.get("headers", {})
 
     if not backend_body:
         errors.append("后端响应没有 body")
         return ValidationResult(prefix=prefix, suffix=suffix, passed=False, errors=errors, warnings=warnings)
 
-    # 检查必要字段
+    if not backend_headers.get("content-type"):
+        warnings.append("后端响应缺少 content-type header")
+    if client_headers and not client_headers.get("content-type"):
+        warnings.append("客户端响应缺少 content-type header")
+
     required_fields = ["id", "choices"]
     for field in required_fields:
         if field not in backend_body:
             errors.append(f"后端响应缺少必要字段: {field}")
 
-    # 提取并对比 content
-    backend_content = extract_content_from_body(backend_body)
-    client_content = extract_content_from_body(client_body) if client_body else None
+    backend_parsed = parse_nonstream_body(backend_body)
+    client_parsed = parse_nonstream_body(client_body) if client_body else None
 
-    if backend_content is not None and client_content is not None:
-        if backend_content != client_content:
-            errors.append(f"content 内容不一致:\n  后端: {backend_content[:100]}...\n  客户端: {client_content[:100]}...")
+    if client_parsed and normalize_text(backend_parsed["content"]) != normalize_text(client_parsed["content"]):
+        errors.append(
+            f"content 内容不一致:\n  后端: {normalize_text(backend_parsed['content'])[:100]}...\n  客户端: {normalize_text(client_parsed['content'])[:100]}..."
+        )
 
-    # 提取并对比 reasoning_content
-    backend_reasoning = None
-    client_reasoning = None
+    if client_parsed and normalize_text(backend_parsed["reasoning_content"]) != normalize_text(client_parsed["reasoning_content"]):
+        warnings.append("reasoning_content 与客户端响应不一致（可能被过滤或转换）")
 
-    try:
-        backend_reasoning = backend_body.get("choices", [{}])[0].get("message", {}).get("reasoning_content")
-        if client_body:
-            client_reasoning = client_body.get("choices", [{}])[0].get("message", {}).get("reasoning_content")
-    except:
-        pass
+    for tool_call in backend_parsed["tool_calls"]:
+        if not tool_call["function"]["name"]:
+            errors.append("存在缺少 function.name 的 tool_call")
+        if tool_call["function"]["arguments"] is None:
+            errors.append("存在缺少 function.arguments 的 tool_call")
 
-    if backend_reasoning and not client_reasoning:
-        warnings.append("后端有 reasoning_content 但客户端响应没有（可能被过滤）")
-
-    if backend_reasoning != client_reasoning:
-        if backend_reasoning and client_reasoning:
-            errors.append("reasoning_content 内容不一致")
+    valid_finish_reasons = {"stop", "tool_calls", "length", "content_filter", "function_call"}
+    for finish_reason in backend_parsed["finish_reasons"]:
+        if finish_reason not in valid_finish_reasons:
+            warnings.append(f"发现未知 finish_reason: {finish_reason}")
 
     return ValidationResult(
         prefix=prefix,
@@ -309,6 +328,17 @@ def validate_request_mapping(recording: dict) -> ValidationResult:
     if client_model and backend_model:
         if client_model == backend_model:
             warnings.append("model 字段未被替换（可能配置问题）")
+    if client_request.get("endpoint") != backend_request.get("endpoint"):
+        warnings.append(
+            f"client/backend endpoint 不同: client={client_request.get('endpoint')}, backend={backend_request.get('endpoint')}"
+        )
+
+    client_headers = client_request.get("headers", {})
+    backend_headers = backend_request.get("headers", {})
+    if "content-type" not in {key.lower() for key in client_headers.keys()}:
+        errors.append("client_request 缺少 content-type header")
+    if "content-type" not in {key.lower() for key in backend_headers.keys()}:
+        errors.append("backend_request 缺少 content-type header")
 
     return ValidationResult(
         prefix=prefix,

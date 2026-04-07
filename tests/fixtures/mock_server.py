@@ -27,6 +27,8 @@ from fastapi.responses import StreamingResponse, Response, JSONResponse
 from starlette.testclient import TestClient
 import httpx
 
+from tests.helpers.request_signature import build_request_signature
+
 
 class MockBackendServer:
     """模拟后端 API，根据录制数据返回固定响应"""
@@ -74,18 +76,22 @@ class MockBackendServer:
         根据请求匹配录制的响应
 
         匹配逻辑：
-        1. 根据 messages 历史中的 tool_call 数量确定当前轮次
-        2. 返回对应 step 的响应
+        1. 若录制样本带 request_signature，则优先按签名精确匹配
+        2. 否则退回到基于 messages 历史中 tool_call 数量的轮次匹配
         """
         messages = request_body.get("messages", [])
+        request_signature = build_request_signature(request_body)
+        backend_responses = self.mock_data.get("backend_responses", [])
+
+        for response in backend_responses:
+            if response.get("request_signature") == request_signature:
+                return response
 
         # 统计 messages 中有多少个 assistant 的 tool_call
         tool_call_count = 0
         for msg in messages:
             if msg.get("role") == "assistant" and msg.get("tool_calls"):
                 tool_call_count += len(msg["tool_calls"])
-
-        backend_responses = self.mock_data.get("backend_responses", [])
 
         # 根据 tool_call 数量返回对应 step 的响应
         for resp in backend_responses:

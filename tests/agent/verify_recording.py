@@ -22,24 +22,7 @@ from typing import Optional
 
 import httpx
 
-
-def extract_content_from_chunks(chunks: list[str]) -> str:
-    """从 SSE chunks 中提取 content"""
-    content_parts = []
-    for chunk in chunks:
-        if not chunk.startswith("data: "):
-            continue
-        content = chunk[6:].strip()
-        if content == "[DONE]":
-            continue
-        try:
-            data = json.loads(content)
-            delta = data.get("choices", [{}])[0].get("delta", {})
-            if "content" in delta and delta["content"]:
-                content_parts.append(delta["content"])
-        except json.JSONDecodeError:
-            pass
-    return "".join(content_parts)
+from tests.helpers.response_parsing import normalize_text, parse_sse_chunks
 
 
 def load_client_request(recording_prefix: str, recording_suffix: str, recordings_dir: Path) -> Optional[dict]:
@@ -76,16 +59,6 @@ async def send_request_and_collect_response(
                 chunks.append(line)
 
     return status_code, chunks, first_headers
-
-
-def normalize_text(text: str) -> str:
-    """规范化文本用于比较"""
-    if not text:
-        return ""
-    text = text.replace('\n', ' ')
-    import re
-    text = re.sub(r'\s+', ' ', text)
-    return text.strip()
 
 
 def normalize_chunk(chunk: str) -> str:
@@ -125,8 +98,8 @@ def compare_responses(
     if client_count != server_count:
         differences.append(f"Chunk 数量不一致: 客户端={client_count}, 服务端={server_count}")
 
-    client_content = extract_content_from_chunks(client_chunks)
-    server_content = extract_content_from_chunks(server_chunks)
+    client_content = parse_sse_chunks(client_chunks)["content"]
+    server_content = parse_sse_chunks(server_chunks)["content"]
 
     if normalize_text(client_content) != normalize_text(server_content):
         differences.append(
@@ -359,7 +332,7 @@ async def main():
 
     print()
 
-    client_content = extract_content_from_chunks(chunks)
+    client_content = parse_sse_chunks(chunks)["content"]
     print(f"响应内容预览 (前 300 字符):")
     print("-" * 40)
     print(client_content[:300] + "..." if len(client_content) > 300 else client_content)

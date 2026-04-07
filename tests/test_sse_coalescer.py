@@ -43,6 +43,32 @@ def _tool_chunk(index: int, arguments: str, *, tool_call_id: str = "", function_
     }
 
 
+def _collect_semantic_output(chunks: list[dict]) -> dict:
+    content = []
+    reasoning_content = []
+    tool_arguments = []
+    finish_reasons = []
+
+    for chunk in chunks:
+        choice = chunk["choices"][0]
+        delta = choice["delta"]
+        if delta.get("content"):
+            content.append(delta["content"])
+        if delta.get("reasoning_content"):
+            reasoning_content.append(delta["reasoning_content"])
+        for tool_call in delta.get("tool_calls", []):
+            tool_arguments.append(tool_call["function"].get("arguments", ""))
+        if choice.get("finish_reason"):
+            finish_reasons.append(choice["finish_reason"])
+
+    return {
+        "content": "".join(content),
+        "reasoning_content": "".join(reasoning_content),
+        "tool_arguments": "".join(tool_arguments),
+        "finish_reasons": finish_reasons,
+    }
+
+
 def test_coalescer_merges_content_until_forced_flush():
     coalescer = SSESemanticCoalescer(
         SSECoalescingConfig(enabled=True, window_ms=20, max_buffer_length=32)
@@ -257,6 +283,39 @@ def test_coalescer_merges_reasoning_content_and_preserves_role():
         "role": "assistant",
         "reasoning_content": "你好",
     }
+
+
+def test_coalescer_reconstructs_final_semantic_output():
+    coalescer = SSESemanticCoalescer(
+        SSECoalescingConfig(enabled=True, window_ms=20, max_buffer_length=64)
+    )
+
+    assert coalescer.push_chunk({
+        "id": "chatcmpl-test",
+        "object": "chat.completion.chunk",
+        "created": 1700000000,
+        "model": "test-model",
+        "choices": [{
+            "index": 0,
+            "delta": {"role": "assistant", "reasoning_content": "先分析"},
+            "finish_reason": None,
+        }],
+    }, now_ms=0) == []
+    outputs = coalescer.push_chunk(_content_chunk("结"), now_ms=10)
+    assert outputs != []
+    assert coalescer.push_chunk(_content_chunk("论"), now_ms=15) == []
+
+    outputs.extend(coalescer.push_chunk(
+        _tool_chunk(0, '{"path":"a.txt"}', tool_call_id="call_x", function_name="read_file", finish_reason="tool_calls"),
+        now_ms=25,
+    ))
+
+    semantic_output = _collect_semantic_output(outputs + coalescer.flush_pending())
+
+    assert semantic_output["reasoning_content"] == "先分析"
+    assert semantic_output["content"] == "结论"
+    assert semantic_output["tool_arguments"] == '{"path":"a.txt"}'
+    assert semantic_output["finish_reasons"] == ["tool_calls"]
 
 
 def test_coalescer_flushes_when_text_field_changes():

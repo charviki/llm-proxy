@@ -16,3 +16,12 @@ dependencies = [
 dev = [
     "pytest-asyncio>=1.3.0",
 ]
+
+[tool.pytest.ini_options]
+markers = [
+    "unit: 纯单元测试",
+    "integration: 需要跨模块联动的集成测试",
+    "replay: 基于录制/回放数据的回归测试",
+    "recording_validation: 录制数据完整性与契约校验",
+    "contract: 可选的真实 backend 契约测试",
+]

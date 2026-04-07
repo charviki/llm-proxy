@@ -1,0 +1,22 @@
+# 真实 backend 契约测试配置示例
+# 用于 tests/agent/test_contract_backend.py
+
+backend:
+  endpoint: "https://api.example.com/v1" # 上游 API 地址
+  api_key_env: "EXAMPLE_API_KEY" # 读取真实 API Key 的环境变量名
+  custom_model_id: "contract-test-model" # 测试请求里使用的模型 ID
+  target_model_id: "provider/model" # 实际转发给上游的模型 ID
+  stream: true # 上游是否原生支持流式
+
+parser:
+  type: "reasoning_content" # 可选：think_tag / reasoning / reasoning_content
+  keywords:
+    - "contract-test-model" # 用于匹配 parser 的关键词
+
+request:
+  messages:
+    - role: "user"
+      content: "请用一句话说明你可以正常响应，并给出一个简短结论。"
+  stream_cases:
+    - true # 验证流式路径
+    - false # 验证非流式路径

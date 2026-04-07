@@ -31,11 +31,58 @@ tests/agent/
 │   ├── project_analysis__nonstream_think/   # MiniMax think_tag 非流式
 │   ├── project_analysis__stream_reasoning/ # OpenRouter reasoning 流式
 │   └── project_analysis__nonstream_reasoning/ # OpenRouter reasoning 非流式
-├── fixtures/
+├── ../fixtures/
 │   └── mock_server.py                      # Mock 后端服务器
+├── ../helpers/
+│   ├── response_parsing.py                 # SSE / JSON 解析与归一化辅助
+│   └── request_signature.py                # 请求签名辅助
+├── contract-config.example.yml             # 契约测试配置示例
+├── contract-config.yml                     # 本地契约测试模板（已忽略）
 ├── record_agent_workflow.py                # 录制脚本
 └── test_agent_workflow.py                  # 测试用例
 ```
+
+## helpers 与 fixtures 的区别
+
+当前测试目录里同时出现了 `helpers` 和 `fixtures`，它们职责不同，不建议混用：
+
+- `tests/helpers/`
+  - 放**纯辅助函数**
+  - 典型内容：SSE / JSON 解析、文本归一化、请求签名生成
+  - 特点：无状态、可复用、不直接构造测试场景
+- `tests/fixtures/`
+  - 放**测试场景构造物**
+  - 典型内容：mock server、fake app、临时测试环境、pytest fixture
+  - 特点：直接服务于“如何搭一个测试场景”
+
+在本仓库中：
+
+- [response_parsing.py](file:///Users/charviki/code/llm-proxy/tests/helpers/response_parsing.py) 和 [request_signature.py](file:///Users/charviki/code/llm-proxy/tests/helpers/request_signature.py) 属于 `helpers`
+- [mock_server.py](file:///Users/charviki/code/llm-proxy/tests/fixtures/mock_server.py) 属于 `fixtures`
+
+建议遵循以下依赖方向：
+
+- `fixtures` 可以依赖 `helpers`
+- `helpers` 不要反向依赖 `fixtures`
+
+这样可以避免测试辅助层和测试场景层相互缠绕，后续目录职责也会更清晰。
+
+## 基线录制样本要求
+
+以下目录中的样本被视为仓库内置的**硬门禁回归资产**，缺失时测试应直接失败，而不是跳过：
+
+- `project_analysis__stream_think`
+- `project_analysis__stream_reasoning`
+- `project_analysis__nonstream_think`
+- `project_analysis__nonstream_reasoning`
+
+这些样本分别覆盖：
+
+- 流式 + think_tag
+- 流式 + reasoning
+- 非流式 JSON 聚合 + think_tag
+- 非流式 JSON 聚合 + reasoning
+- 非流式上游转模拟流输出
 
 ## 支持的 Reasoning 格式
 
@@ -168,6 +215,12 @@ python -m pytest tests/agent/test_agent_workflow.py::test_project_analysis_<form
 
 # 运行所有 agent 测试
 python -m pytest tests/agent/ -v
+
+# 只运行录制/回放回归测试
+python -m pytest -m replay tests/agent/ -v
+
+# 校验录制文件契约
+python -m pytest -m recording_validation tests/agent/ -v
 ```
 
 ## 注意事项
@@ -218,6 +271,23 @@ python -m pytest tests/agent/ -v
 # 运行所有 agent 测试
 python -m pytest tests/agent/ -v
 
+# 只运行基于录制/回放的核心回归
+python -m pytest -m replay tests/agent/ -v
+
+# 运行录制数据校验
+python tests/agent/validate_recordings.py
+```
+
+## 推荐测试矩阵
+
+| 场景 | 推荐命令 | 目的 |
+|------|----------|------|
+| 日常开发 | `python -m pytest tests/test_*.py tests/agent/test_agent_workflow.py -v` | 快速确认核心逻辑和基线录制样本没有回归 |
+| 提交前 | `python -m pytest -m "not contract" -v` | 覆盖单元、集成、回放测试，不依赖真实外部后端 |
+| 录制样本巡检 | `python tests/agent/validate_recordings.py` | 检查录制文件的格式、契约和映射一致性 |
+| 发版前/夜间任务 | `ENABLE_REAL_BACKEND_CONTRACT_TESTS=1 python -m pytest -m contract tests/agent/test_contract_backend.py -v` | 显式连接真实 backend 做协议兼容性抽查 |
+| 运行时重放验证 | `python tests/agent/verify_recording.py --proxy-url http://localhost:8080 --recording-suffix <suffix>` | 验证 `X-Replay-Id` 短路机制与真实录制文件兼容 |
+
 # 输出示例
 tests/agent/test_agent_workflow.py::test_project_analysis__full_loop PASSED
 tests/agent/test_agent_workflow.py::test_mock_data_exists PASSED
@@ -243,12 +313,37 @@ python tests/agent/validate_recordings.py
 | 内容完整性 | content、reasoning_content 是否丢失 |
 | model 映射 | client/backend 请求的 model 字段是否正确 |
 | chunks 数量 | 客户端 chunks 是否少于后端（可能截断） |
+| tool_calls 完整性 | function 名称和 arguments 是否完整拼接 |
+| finish_reason | 是否为预期枚举值 |
+| headers | 是否存在必要的 content-type 等关键头 |
+| 注释行容忍 | 是否存在非 `data:` 的元数据/注释行 |
 
 ### 返回码
 
 - `0`: 所有录制通过
 - `1`: 存在错误
 - `2`: 存在警告（但无错误）
+
+## 可选的真实 backend 契约测试
+
+如果你希望在**不重新录制样本**的情况下，直接验证当前真实供应商接口是否仍满足 `llm-proxy` 的协议假设，可以使用可选的契约测试：
+
+1. 仓库已提供 [contract-config.example.yml](file:///Users/charviki/code/llm-proxy/tests/agent/contract-config.example.yml) 和本地配置模板 `tests/agent/contract-config.yml`（已加入忽略规则）
+2. 填写测试专用 backend 的 `endpoint / model / parser / API key env`
+3. 导出真实 API Key
+4. 显式启用契约测试
+
+```bash
+export EXAMPLE_API_KEY=your_real_key
+export ENABLE_REAL_BACKEND_CONTRACT_TESTS=1
+python -m pytest -m contract tests/agent/test_contract_backend.py -v
+```
+
+注意：
+
+- 这类测试是 **opt-in 的契约测试层**，不是默认 CI 回归项
+- 它的价值在于发现真实供应商协议漂移，而不是替代仓库内置录制回放样本
+- 推荐放到手动验证、夜间任务或发版前 smoke check 中执行
 
 ## 基于录制的本地重放测试
 

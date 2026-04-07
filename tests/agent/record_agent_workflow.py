@@ -21,9 +21,12 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 import httpx
+
+from tests.helpers.request_signature import build_request_signature
+from tests.helpers.response_parsing import parse_nonstream_body, parse_sse_chunks
 
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -100,140 +103,6 @@ def execute_tool(tool_name: str, arguments: dict) -> str:
 
 
 # ============== 录制逻辑 ==============
-
-def parse_stream_response(chunks: list[str]) -> dict:
-    """
-    解析 SSE chunks，提取 content、reasoning、tool_calls
-
-    泛化处理所有包含 think 标签的格式：
-    - 提取 <think>...</think> 之间的内容作为 reasoning_content
-    - </think> 之后的内容作为真正的 content
-    - 分别格式化后返回
-    """
-    content_parts = []
-    reasoning_parts = []
-    tool_calls_map = {}
-    current_tc = None
-
-    for line in chunks:
-        if not line.startswith("data: "):
-            continue
-
-        data_str = line[6:].strip()
-        if data_str == "[DONE]":
-            continue
-
-        try:
-            data = json.loads(data_str)
-            delta = data.get("choices", [{}])[0].get("delta", {})
-
-            # 显式的 reasoning_content（如 OpenAI 格式）或 reasoning（如 OpenRouter 格式）
-            if "reasoning_content" in delta and delta["reasoning_content"]:
-                reasoning_parts.append(delta["reasoning_content"])
-            elif "reasoning" in delta and delta["reasoning"]:
-                reasoning_parts.append(delta["reasoning"])
-
-            # content 中可能包含 think 标签
-            if "content" in delta and delta["content"]:
-                content_parts.append(delta["content"])
-
-            if "tool_calls" in delta:
-                for tc_delta in delta["tool_calls"]:
-                    idx = tc_delta.get("index", 0)
-
-                    if current_tc is None or current_tc.get("_index") != idx:
-                        if current_tc is not None:
-                            tool_calls_map[current_tc["_index"]] = current_tc
-                        current_tc = {
-                            "_index": idx,
-                            "id": tc_delta.get("id", ""),
-                            "type": "function",
-                            "function": {"name": "", "arguments": ""}
-                        }
-
-                    if tc_delta.get("function", {}).get("name"):
-                        current_tc["function"]["name"] = tc_delta["function"]["name"]
-                    if tc_delta.get("function", {}).get("arguments"):
-                        current_tc["function"]["arguments"] += tc_delta["function"]["arguments"]
-
-        except json.JSONDecodeError:
-            pass
-
-    if current_tc is not None:
-        tool_calls_map[current_tc["_index"]] = current_tc
-
-    # 清理 _index
-    for tc in tool_calls_map.values():
-        tc.pop("_index", None)
-
-    # 泛化处理：分离 think 标签内容和真正 content
-    raw_content = "".join(content_parts)
-
-    import re
-
-    # 如果有显式的 reasoning 或 reasoning_content，优先使用
-    explicit_reasoning = "".join(reasoning_parts)
-    if explicit_reasoning:
-        # reasoning 字段已有内容，不需要从 content 中提取 think 标签
-        reasoning_from_think = explicit_reasoning
-        # content 中可能仍包含 think 标签，需要去除
-        cleaned_content = re.sub(r'<think>.*?</think>', '', raw_content, flags=re.DOTALL)
-        cleaned_content = cleaned_content.strip()
-    else:
-        # 没有 reasoning 字段，才从 content 中提取 think 标签
-        think_matches = re.findall(r'<think>\s*(.*?)\s*</think>', raw_content, re.DOTALL)
-        reasoning_from_think = '\n'.join(think_matches).strip() if think_matches else ""
-        # 去除 think 标签后的内容作为真正的 content
-        cleaned_content = re.sub(r'<think>.*?</think>', '', raw_content, flags=re.DOTALL)
-        cleaned_content = cleaned_content.strip()
-
-    return {
-        "content": cleaned_content,
-        "reasoning_content": reasoning_from_think,
-        "tool_calls": list(tool_calls_map.values())
-    }
-
-
-def parse_nonstream_response(response_json: dict) -> dict:
-    """
-    解析非流式响应，提取 content、reasoning、tool_calls
-    """
-    import re
-
-    message = response_json.get("choices", [{}])[0].get("message", {})
-
-    raw_content = message.get("content", "")
-
-    # 提取 <think>...</think> 之间的内容作为 reasoning_content
-    think_matches = re.findall(r'<think>\s*(.*?)\s*</think>', raw_content, re.DOTALL)
-    reasoning_from_think = '\n'.join(think_matches).strip() if think_matches else ""
-
-    # 去除 think 标签后的内容作为真正的 content
-    cleaned_content = re.sub(r'<think>.*?</think>', '', raw_content, flags=re.DOTALL)
-    cleaned_content = cleaned_content.strip()
-
-    # 显式的 reasoning_content 或 reasoning
-    explicit_reasoning = message.get("reasoning_content") or message.get("reasoning") or ""
-    if explicit_reasoning:
-        reasoning_from_think = explicit_reasoning
-
-    # 提取 tool_calls
-    tool_calls = []
-    for tc in message.get("tool_calls", []):
-        tool_calls.append({
-            "id": tc.get("id", ""),
-            "type": "function",
-            "function": {
-                "name": tc.get("function", {}).get("name", ""),
-                "arguments": tc.get("function", {}).get("arguments", "")
-            }
-        })
-
-    return {
-        "content": cleaned_content,
-        "reasoning_content": reasoning_from_think,
-        "tool_calls": tool_calls
-    }
 
 
 async def record_workflow(
@@ -318,11 +187,11 @@ async def record_workflow(
             async for line in response.aiter_lines():
                 if line:
                     raw_chunks.append(line)
-            parsed = parse_stream_response(raw_chunks)
+            parsed = parse_sse_chunks(raw_chunks)
         else:
             # 非流式响应：直接解析 JSON
             response_json = response.json()
-            parsed = parse_nonstream_response(response_json)
+            parsed = parse_nonstream_body(response_json)
             raw_chunks = [json.dumps(response_json)]
 
         logger.info(f"Content: {parsed['content'][:100] if parsed['content'] else 'None'}...")
@@ -332,6 +201,7 @@ async def record_workflow(
         # 保存后端响应
         mock_data["backend_responses"].append({
             "step": turn,
+            "request_signature": build_request_signature(request_body),
             "raw_chunks": raw_chunks,
             "reasoning_content": parsed["reasoning_content"] or None,
             "content": parsed["content"]
