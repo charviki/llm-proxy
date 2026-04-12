@@ -9,6 +9,7 @@ from .recorder import (
     write_response,
     get_recording_context,
     clear_recording_context,
+    _now_iso,
 )
 from .context import get_replay_id
 from .transport import Middleware
@@ -101,10 +102,12 @@ class TransportRecordingMiddleware(Middleware):
         )
 
         start_time = time.perf_counter()
+        request_sent_at = _now_iso()
 
         try:
             response = await next_handler()
             timing_ms = (time.perf_counter() - start_time) * 1000
+            response_received_at = _now_iso()
         except Exception as error:
             timing_ms = (time.perf_counter() - start_time) * 1000
             self.logger.error(f"[Recording] on_error: {error}")
@@ -115,7 +118,10 @@ class TransportRecordingMiddleware(Middleware):
                 response_type=response_type,
                 status_code=0,
                 timing_ms=timing_ms,
-                error=str(error)
+                error=str(error),
+                timing={
+                    "request_sent_at": request_sent_at,
+                }
             )
             clear_recording_context()
             raise
@@ -128,12 +134,13 @@ class TransportRecordingMiddleware(Middleware):
         content_type = self._get_content_type(response)
 
         if "text/event-stream" in content_type:
-            # 捕获闭包所需的上下文变量
             ctx_prefix = prefix
             ctx_suffix = suffix
             ctx_response_type = response_type
             ctx_status_code = status_code
             ctx_timing_ms = timing_ms
+            ctx_request_sent_at = request_sent_at
+            ctx_response_received_at = response_received_at
 
             def on_stream_close(collected_chunks: list[bytes]) -> None:
                 try:
@@ -151,7 +158,12 @@ class TransportRecordingMiddleware(Middleware):
                         status_code=ctx_status_code,
                         timing_ms=ctx_timing_ms,
                         chunks=chunks_list,
-                        error=None
+                        error=None,
+                        timing={
+                            "request_sent_at": ctx_request_sent_at,
+                            "response_received_at": ctx_response_received_at,
+                            "stream_completed_at": _now_iso(),
+                        }
                     )
                     # 流结束后清除 context
                     clear_recording_context()
@@ -192,7 +204,11 @@ class TransportRecordingMiddleware(Middleware):
             timing_ms=timing_ms,
             body=parsed_body,
             chunks=chunks,
-            error=None
+            error=None,
+            timing={
+                "request_sent_at": request_sent_at,
+                "response_received_at": response_received_at,
+            }
         )
         # 清除录制上下文
         clear_recording_context()

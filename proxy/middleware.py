@@ -12,6 +12,7 @@ from .recorder import (
     write_response,
     set_recording_context,
     clear_recording_context,
+    _now_iso,
 )
 from .context import (
     set_replay_id,
@@ -99,12 +100,15 @@ class RecordingMiddleware:
             status_code = 200
             start_time = time.time()
             headers = {}
+            request_received_at = _now_iso()
+            response_start_at = None
 
             async def custom_send(message: dict) -> None:
-                nonlocal status_code, headers
+                nonlocal status_code, headers, response_start_at
                 if message["type"] == "http.response.start":
                     status_code = message.get("status", 200)
-                    # 防御性处理，有些中间件可能不规范
+                    if response_start_at is None:
+                        response_start_at = _now_iso()
                     for k, v in message.get("headers", []):
                         try:
                             key = k.decode("utf-8") if isinstance(k, bytes) else str(k)
@@ -118,7 +122,6 @@ class RecordingMiddleware:
                 await send(message)
 
             try:
-                # 传入 replay_receive 给下游
                 await self.app(scope, replay_receive, custom_send)
             except Exception as e:
                 timing_ms = (time.time() - start_time) * 1000
@@ -130,12 +133,16 @@ class RecordingMiddleware:
                     status_code=500,
                     timing_ms=timing_ms,
                     chunks=[],
-                    error=str(e)
+                    error=str(e),
+                    timing={
+                        "request_received_at": request_received_at,
+                        "response_start_at": response_start_at,
+                    }
                 )
                 raise
             else:
-                # 正常请求结束，写入响应数据
                 timing_ms = (time.time() - start_time) * 1000
+                response_completed_at = _now_iso()
                 decoded_chunks = []
                 for c in chunks:
                     if isinstance(c, bytes):
@@ -144,14 +151,16 @@ class RecordingMiddleware:
                         decoded_chunks.append(c)
                     else:
                         decoded_chunks.append(str(c))
-                        
-                # 检查 content-type 判断是否为流式
+
                 content_type = headers.get("content-type", "")
                 is_stream = "text/event-stream" in content_type
-                
-                # 兼容非流式时的上下文恢复（因为使用了原生 ASGI）
-                # 上下文可能在生成流的过程中被清理了，不再重新设置
-                
+
+                client_timing = {
+                    "request_received_at": request_received_at,
+                    "response_start_at": response_start_at,
+                    "response_completed_at": response_completed_at,
+                }
+                        
                 if not is_stream and decoded_chunks:
                     try:
                         full_body = "".join(decoded_chunks)
@@ -164,10 +173,10 @@ class RecordingMiddleware:
                             timing_ms=timing_ms,
                             body=json_body,
                             error=None,
-                            headers=headers
+                            headers=headers,
+                            timing=client_timing
                         )
                     except Exception:
-                        # 解析失败也作为 chunks 记录
                         write_response(
                             prefix=prefix,
                             suffix=suffix,
@@ -176,7 +185,8 @@ class RecordingMiddleware:
                             timing_ms=timing_ms,
                             chunks=decoded_chunks,
                             error=None,
-                            headers=headers
+                            headers=headers,
+                            timing=client_timing
                         )
                 else:
                     write_response(
@@ -187,7 +197,8 @@ class RecordingMiddleware:
                         timing_ms=timing_ms,
                         chunks=decoded_chunks,
                         error=None,
-                        headers=headers
+                        headers=headers,
+                        timing=client_timing
                     )
         finally:
             clear_recording_context()
